@@ -16,9 +16,15 @@ on:
       model:
         description: Speech model for the clip windows (base.en or small.en)
         default: small.en
+      send:
+        description: Send the clips to his Telegram (yes or no)
+        default: "no"
 
 permissions:
   contents: read
+
+concurrency:
+  group: glue-run  # one clip run at a time; a second one waits
 
 jobs:
   clip:
@@ -130,6 +136,20 @@ jobs:
           tail -n 2 "$WORK/out/run.log"
           find "$WORK/out" -name "*.mp4" | wc -l
           [ "$ok" = 1 ]
+
+      - name: Send to Telegram
+        if: inputs.send == 'yes'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 bin/send_clips.py "$WORK/out" "practice batch, not logged yet"
+
+      - name: Tell him it failed
+        if: failure() && inputs.send == 'yes'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 bin/send_telegram.py text "The clip run hit a problem, sir. Claude will look at it; nothing was posted."
 
       - uses: actions/upload-artifact@v4
         if: always()

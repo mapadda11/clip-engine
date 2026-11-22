@@ -1,0 +1,29 @@
+name: telegram-inbox
+
+# Reads his messages to the clip bot every few minutes (bin/telegram_inbox.py): clip, status, stop, help.
+# Only his own chat is answered.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # GitHub runs these a few minutes late at busy times
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write  # to start or cancel glue-run
+
+concurrency:
+  group: telegram-inbox
+  cancel-in-progress: false
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 bin/telegram_inbox.py
