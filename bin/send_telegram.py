@@ -78,18 +78,30 @@ def _call(method, fields=None, files=None, tries=4):
             time.sleep(5 * (attempt + 1))
 
 
+def probe(path):
+    """(width, height, seconds) of the video stream, so Telegram shows it at its real 9:16 shape."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=width,height:format=duration", "-of", "json", str(path)],
+                         capture_output=True, text=True).stdout
+    info = json.loads(out or "{}")
+    st = (info.get("streams") or [{}])[0]
+    return int(st.get("width") or 1080), int(st.get("height") or 1920), float((info.get("format") or {}).get("duration") or 30)
+
+
 def fit(path):
-    """The video itself if it is under the limit, else a smaller copy (same length, lower bitrate)."""
+    """A copy ready to stream: moov atom first (+faststart), same picture. Over the limit it is re-encoded
+    at the highest bitrate that fits (22 Nov: he wants it sharp, so no lower than needed)."""
     path = Path(path)
-    if path.stat().st_size <= LIMIT:
-        return path
-    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
-                                str(path)], capture_output=True, text=True).stdout or 30)
-    kbps = int(LIMIT * 8 / 1000 / dur * 0.9) - 160
     out = Path(tempfile.mkdtemp()) / path.name
-    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(path), "-c:v", "libx264", "-preset", "medium",
-                    "-b:v", "%dk" % kbps, "-maxrate", "%dk" % kbps, "-bufsize", "%dk" % (2 * kbps),
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)], check=True)
+    if path.stat().st_size <= LIMIT:
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(path), "-c", "copy",
+                        "-movflags", "+faststart", str(out)], check=True)
+        return out
+    dur = probe(path)[2]
+    kbps = int(LIMIT * 8 / 1000 / dur * 0.95) - 192
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(path), "-c:v", "libx264", "-preset", "slow",
+                    "-b:v", "%dk" % kbps, "-maxrate", "%dk" % int(kbps * 1.2), "-bufsize", "%dk" % (2 * kbps),
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], check=True)
     return out
 
 
@@ -101,8 +113,10 @@ def send_text(text, chat=None):
 def send_video(video, caption, chat=None):
     chat = chat or chat_id()
     head, rest = (caption, "") if len(caption) <= CAPTION_MAX else split_caption(caption)
-    r = _call("sendVideo", {"chat_id": chat, "caption": head, "parse_mode": "HTML", "supports_streaming": "true"},
-              files={"video": fit(video)})
+    ready = fit(video)
+    w, h, dur = probe(ready)
+    r = _call("sendVideo", {"chat_id": chat, "caption": head, "parse_mode": "HTML", "supports_streaming": "true",
+                            "width": w, "height": h, "duration": int(round(dur))}, files={"video": ready})
     if rest:
         send_text(rest, chat)
     return r
