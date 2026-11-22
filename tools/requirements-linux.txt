@@ -1,0 +1,5 @@
+torch
+open_clip_torch==2.32.0
+opencv-python-headless
+numpy
+pillow

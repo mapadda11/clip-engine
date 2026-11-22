@@ -1,0 +1,74 @@
+"""Linux stand-in for scene_labels.swift (macOS Vision). Same output, one line per image:
+"name label:conf label:conf ... | TEXT: line / line"
+
+Scenes: zero-shot OpenCLIP (ViT-B-32, LAION-2B) over a fixed list of GTA scenes. The labels that matter
+to the filter use the Mac's names (nightclub, swimwear, lingerie, ...); the rest are there so ordinary
+gameplay has somewhere to go. Confidences are softmax shares, so they are calibrated separately from
+Vision's (see SCENE_LIMITS in the glue). Text: Tesseract on a 2x grey copy.
+Usage: scene_labels.py IMAGE...
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+LABELS = {
+    "nightclub": ["a dark nightclub with neon lights and people dancing", "a strip club with a pole dancer",
+                  "a club interior with coloured spotlights"],
+    "swimwear": ["a woman in a bikini or swimsuit"],
+    "lingerie": ["a woman in lingerie or underwear", "a topless dancer"],
+    "street": ["a city street with cars in a video game", "a car driving on a road at night"],
+    "car_interior": ["the inside of a car while driving"],
+    "countryside": ["a forest or countryside road", "a swamp with trees"],
+    "shop": ["a shop or warehouse interior", "a gas station"],
+    "house": ["a house interior", "a bedroom with a person at a desk"],
+    "bar": ["a quiet bar or restaurant"],
+    "menu": ["a pause menu in a video game", "a weapon selection menu", "a map screen in a video game",
+             "a black screen with large text"],
+    "desktop": ["a computer screen with a streaming dashboard"],
+    "people_talking": ["people talking outdoors in daylight", "a close-up of a man's face"],
+    "action": ["a shootout or police chase", "a car crash"],
+}
+MODEL, PRETRAINED = "ViT-B-32", "laion2b_s34b_b79k"
+
+
+def ocr(path):
+    try:
+        r = subprocess.run(["tesseract", path, "stdout", "--psm", "11", "-c", "tessedit_do_invert=0"],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    lines = [ln.strip() for ln in r.stdout.splitlines() if len(ln.strip()) >= 3]
+    return " / ".join(lines)
+
+
+def main(paths):
+    import open_clip
+    import torch
+    from PIL import Image
+
+    torch.set_num_threads(4)
+    model, _, prep = open_clip.create_model_and_transforms(MODEL, pretrained=PRETRAINED)
+    tok = open_clip.get_tokenizer(MODEL)
+    names, prompts = [], []
+    for label, texts in LABELS.items():
+        for t in texts:
+            names.append(label)
+            prompts.append(t)
+    with torch.no_grad():
+        tf = model.encode_text(tok(prompts))
+        tf /= tf.norm(dim=-1, keepdim=True)
+        for path in paths:
+            img = prep(Image.open(path).convert("RGB")).unsqueeze(0)
+            f = model.encode_image(img)
+            f /= f.norm(dim=-1, keepdim=True)
+            p = (100.0 * f @ tf.T).softmax(dim=-1)[0].tolist()
+            score = {}
+            for label, v in zip(names, p):
+                score[label] = score.get(label, 0.0) + v
+            top = sorted(score.items(), key=lambda kv: -kv[1])
+            labs = " ".join("%s:%.2f" % kv for kv in top if kv[1] > 0.1)
+            print(Path(path).name, labs, "| TEXT:", ocr(path), flush=True)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
