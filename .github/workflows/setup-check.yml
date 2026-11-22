@@ -1,0 +1,36 @@
+name: setup-check
+
+# After the one-time phone setup: checks the three secrets work. Sends one Telegram test message
+# and reads (never changes) the private alfred-hq repo. Prints nothing secret.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Telegram test message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -n "$TELEGRAM_BOT_TOKEN" ] || { echo "TELEGRAM_BOT_TOKEN missing"; exit 1; }
+          [ -n "$TELEGRAM_CHAT_ID" ] || { echo "TELEGRAM_CHAT_ID missing"; exit 1; }
+          python3 bin/send_telegram.py test
+      - name: Read alfred-hq
+        uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips/campaigns
+      - name: Key can read issues
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+        run: gh issue list -R mapadda11/alfred-hq -l campaign --limit 1 --json number --jq 'length' > /dev/null && echo "issues ok"
