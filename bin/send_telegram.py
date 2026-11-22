@@ -7,6 +7,7 @@ Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from the environment (Actions secr
 Bots can upload at most 50 MB per file, so bigger videos are re-encoded first (see fit()).
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -22,8 +23,24 @@ LIMIT = 49 * 1024 * 1024  # a little under the 50 MB bot upload cap
 CAPTION_MAX = 1024        # Telegram's caption limit; longer text goes in a follow-up message
 
 
+def _secret(name, pattern):
+    """The token or chat ID inside whatever was pasted (extra words or spaces from a phone copy)."""
+    m = re.search(pattern, os.environ.get(name, ""))
+    if not m:
+        raise SystemExit("%s doesn't look right: paste it again (docs/telegram-setup.md, step D)" % name)
+    return m.group()
+
+
+def token():
+    return _secret("TELEGRAM_BOT_TOKEN", r"\d{5,}:[A-Za-z0-9_-]{30,}")
+
+
+def chat_id():
+    return _secret("TELEGRAM_CHAT_ID", r"-?\d{5,}")
+
+
 def _call(method, fields=None, files=None, tries=4):
-    token = os.environ["TELEGRAM_BOT_TOKEN"].strip()  # pasted secrets often carry a space
+    tok = token()
     fields = {k: str(v) for k, v in (fields or {}).items()}
     if files:
         boundary = uuid.uuid4().hex
@@ -40,7 +57,7 @@ def _call(method, fields=None, files=None, tries=4):
         body = json.dumps(fields).encode()
         ctype = "application/json"
     for attempt in range(tries):
-        req = urllib.request.Request(API % (token, method), data=body, headers={"Content-Type": ctype})
+        req = urllib.request.Request(API % (tok, method), data=body, headers={"Content-Type": ctype})
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
                 return json.load(r)
@@ -73,12 +90,12 @@ def fit(path):
 
 
 def send_text(text, chat=None):
-    return _call("sendMessage", {"chat_id": chat or os.environ["TELEGRAM_CHAT_ID"].strip(), "text": text,
+    return _call("sendMessage", {"chat_id": chat or chat_id(), "text": text,
                                  "parse_mode": "HTML", "disable_web_page_preview": "true"})
 
 
 def send_video(video, caption, chat=None):
-    chat = chat or os.environ["TELEGRAM_CHAT_ID"].strip()
+    chat = chat or chat_id()
     head, rest = (caption, "") if len(caption) <= CAPTION_MAX else split_caption(caption)
     r = _call("sendVideo", {"chat_id": chat, "caption": head, "parse_mode": "HTML", "supports_streaming": "true"},
               files={"video": fit(video)})
