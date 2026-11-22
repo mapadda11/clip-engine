@@ -1,0 +1,118 @@
+name: feasibility
+
+# Step 0: can a free GitHub runner download a VOD, transcribe it on CPU and render clips in time?
+# Never posts. Clips are kept for one day as a workflow artifact, then deleted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      vod_url:
+        description: VOD URL (Kick)
+        required: true
+      model:
+        description: Speech model for the full run (base.en or small.en)
+        default: small.en
+      clips:
+        description: Clips to render
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GC_COMMIT: 005204201f7ad4e5a48f500830c1cd3db2217bf0
+      WHISPER_TAG: v1.9.5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Machine and work folder
+        run: |
+          nproc; free -g; df -h / /mnt || true
+          if sudo mkdir -p /mnt/work 2>/dev/null; then sudo chown "$USER" /mnt/work; W=/mnt/work; else W="$RUNNER_TEMP/work"; mkdir -p "$W"; fi
+          echo "WORK=$W" >> "$GITHUB_ENV"
+          mkdir -p "$W/out" "$W/models"
+          echo "{}" > "$W/out/timings.json"
+
+      - name: Tools (ffmpeg, yt-dlp)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg cmake > /dev/null
+          pip install -q -U "yt-dlp[default]"
+          ffmpeg -hide_banner -encoders | grep -c libx264
+          yt-dlp --version
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+
+      - name: Cache whisper.cpp
+        id: wcache
+        uses: actions/cache@v4
+        with:
+          path: ~/whisper-bin
+          key: whisper-${{ env.WHISPER_TAG }}-x64-avx2-static
+
+      - name: Build whisper.cpp (CPU)
+        if: steps.wcache.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --depth 1 -b "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp /tmp/wcpp
+          cmake -S /tmp/wcpp -B /tmp/wcpp/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON > /dev/null
+          cmake --build /tmp/wcpp/build -j"$(nproc)" --target whisper-cli > /dev/null
+          mkdir -p ~/whisper-bin && cp /tmp/wcpp/build/bin/whisper-cli ~/whisper-bin/
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORK }}/models
+          key: models-base.en-small.en-yunet2023mar
+
+      - name: Models
+        run: |
+          cd "$WORK/models"
+          for m in base.en small.en; do
+            [ -s "ggml-$m.bin" ] || curl -sSfL -o "ggml-$m.bin" "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$m.bin"
+          done
+          f=face_detection_yunet_2023mar.onnx
+          [ -s "$f" ] || curl -sSfL -o "$f" "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/$f"
+          ls -la
+
+      - name: Engine (gaming-clip, pinned)
+        run: |
+          git clone -q https://github.com/iyansr/gaming-clip "$WORK/gaming-clip"
+          git -C "$WORK/gaming-clip" checkout -q "$GC_COMMIT"
+          cd "$WORK/gaming-clip" && bun install --frozen-lockfile > /dev/null
+          echo "WHISPER_BIN=$HOME/whisper-bin/whisper-cli" >> "$GITHUB_ENV"
+          echo "GCLIP_MODELS=$WORK/models" >> "$GITHUB_ENV"
+          echo "GCLIP_WORKSPACE=$WORK/ws" >> "$GITHUB_ENV"
+
+      - name: 1. Download the VOD
+        env:
+          VOD_URL: ${{ inputs.vod_url }}
+        run: python3 scripts/feasibility.py download
+
+      - name: 1b. Is YouTube blocked here?
+        run: python3 scripts/feasibility.py youtube
+
+      - name: 2. Transcription speed (base.en vs small.en, 10 min sample)
+        run: python3 scripts/feasibility.py bench
+
+      - name: 3. Full engine run and render
+        env:
+          WHISPER_MODEL: ${{ inputs.model }}
+          CLIPS: ${{ inputs.clips }}
+        run: python3 scripts/feasibility.py engine
+
+      - name: Summary
+        if: always()
+        run: python3 scripts/feasibility.py summary >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feasibility-out
+          path: ${{ env.WORK }}/out
+          retention-days: 1
