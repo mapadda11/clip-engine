@@ -28,7 +28,10 @@ def main(folder, note=""):
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
         T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note))
-    T.send_text("That's all %d. Post, then submit on Content Rewards within 30 min." % len(clips))
+    if "practice" in note or "test" in note:
+        T.send_text("That's all %d. These are test clips: tell me what you think, but don't post them yet." % len(clips))
+    else:
+        T.send_text("That's all %d. Post, then submit on Content Rewards within 30 min." % len(clips))
 
 
 if __name__ == "__main__":

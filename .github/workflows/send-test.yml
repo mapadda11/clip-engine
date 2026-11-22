@@ -10,8 +10,11 @@ on:
         description: alfred-hq release tag
         default: sample-2026-11-22
       clip:
-        description: File name in that release
+        description: File name in that release (several, comma separated; each .mp4's .txt is its caption)
         default: 1-wrong-place.mp4
+      note:
+        description: Short note shown on each clip
+        default: test clip
 
 permissions:
   contents: read
@@ -22,17 +25,21 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Get the clip
+      - name: Get the clips
         env:
           GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
           TAG: ${{ inputs.release }}
-          CLIP: ${{ inputs.clip }}
-        run: gh release download "$TAG" -R mapadda11/alfred-hq -p "$CLIP" -D clip
+          CLIPS: ${{ inputs.clip }}
+        run: |
+          mkdir -p clip
+          for c in ${CLIPS//,/ }; do
+            gh release download "$TAG" -R mapadda11/alfred-hq -p "$c" -D clip
+            gh release download "$TAG" -R mapadda11/alfred-hq -p "${c%.mp4}.txt" -D clip || true
+          done
+          ls clip
       - name: Send to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          CLIP: ${{ inputs.clip }}
-        run: |
-          printf '<b>Test clip</b> (from the Mac sample, not the new cloud run)\n\nThis is how clips will arrive: video, then a caption you can copy.\n\n<code>caption and #hashtags go here</code>' > caption.txt
-          python3 bin/send_telegram.py video "clip/$CLIP" caption.txt
+          NOTE: ${{ inputs.note }}
+        run: python3 bin/send_clips.py clip "$NOTE"
