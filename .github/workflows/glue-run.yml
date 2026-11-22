@@ -19,6 +19,9 @@ on:
       send:
         description: Send the clips to his Telegram (yes or no)
         default: "no"
+      send_top:
+        description: Send only the best N (0 = all)
+        default: "0"
 
 permissions:
   contents: read
@@ -142,7 +145,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 bin/send_clips.py "$WORK/out" "practice batch, not logged yet"
+          SEND_TOP: ${{ inputs.send_top }}
+        run: python3 bin/send_clips.py "$WORK/out" "practice batch, not logged yet" "$SEND_TOP"
 
       - name: Tell him it failed
         if: failure() && inputs.send == 'yes'

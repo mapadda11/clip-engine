@@ -20,8 +20,9 @@ def caption(i, n, cap, note=""):
     return "%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, esc(cap.strip()))
 
 
-def main(folder, note=""):
+def main(folder, note="", top=0):
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
+    clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
     if not clips:
         T.send_text("The run finished but no clips passed the filters this time.")
         return
@@ -35,4 +36,4 @@ def main(folder, note=""):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "")
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", int(sys.argv[3]) if len(sys.argv) > 3 else 0)
