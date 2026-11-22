@@ -1,0 +1,38 @@
+name: send-test
+
+# Sends one finished clip from a private alfred-hq release to his Telegram, the same way batches will.
+# Nothing is posted anywhere; the clip only goes to his own chat.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: alfred-hq release tag
+        default: sample-2026-11-22
+      clip:
+        description: File name in that release
+        default: 1-wrong-place.mp4
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the clip
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          TAG: ${{ inputs.release }}
+          CLIP: ${{ inputs.clip }}
+        run: gh release download "$TAG" -R mapadda11/alfred-hq -p "$CLIP" -D clip
+      - name: Send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLIP: ${{ inputs.clip }}
+        run: |
+          printf '<b>Test clip</b> (from the Mac sample, not the new cloud run)\n\nThis is how clips will arrive: video, then a caption you can copy.\n\n<code>caption and #hashtags go here</code>' > caption.txt
+          python3 bin/send_telegram.py video "clip/$CLIP" caption.txt
