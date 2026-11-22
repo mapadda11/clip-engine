@@ -4,11 +4,10 @@
 Scenes: zero-shot OpenCLIP (ViT-B-32, LAION-2B) over a fixed list of GTA scenes. The labels that matter
 to the filter use the Mac's names (nightclub, swimwear, lingerie, ...); the rest are there so ordinary
 gameplay has somewhere to go. Confidences are softmax shares, so they are calibrated separately from
-Vision's (see SCENE_LIMITS in the glue). Text: Tesseract on a 2x grey copy.
+Vision's (see SCENE_LIMITS in the glue); "nightclub" also needs a neon-lit frame. Text: RapidOCR
+("<unread>" if it is missing).
 Usage: scene_labels.py IMAGE...
 """
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -49,25 +48,18 @@ _RAPID = None
 
 
 def ocr(path):
-    """On-screen text. RapidOCR (PaddleOCR models on ONNX, Apache-2.0) when installed, else Tesseract.
-    22 Nov 2026 calibration: Tesseract read only noise from stream frames; Vision read chat and signs."""
+    """On-screen text with RapidOCR (PaddleOCR models on ONNX, Apache-2.0). 22 Nov 2026 calibration:
+    Tesseract read only noise from stream frames, so there is no fallback: without RapidOCR every frame
+    reports "<unread>" and the glue skips the clip rather than calling it clean."""
     global _RAPID
-    if os.environ.get("OCR", "rapid") == "rapid":
-        try:
-            if _RAPID is None:
-                from rapidocr_onnxruntime import RapidOCR
-                _RAPID = RapidOCR()
-            res, _ = _RAPID(path)
-            return " / ".join(r[1] for r in (res or []) if r[2] >= 0.6 and len(r[1].strip()) >= 3)
-        except ImportError:
-            pass
     try:
-        r = subprocess.run(["tesseract", path, "stdout", "--psm", "11", "-c", "tessedit_do_invert=0"],
-                           capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    lines = [ln.strip() for ln in r.stdout.splitlines() if len(ln.strip()) >= 3]
-    return " / ".join(lines)
+        if _RAPID is None:
+            from rapidocr_onnxruntime import RapidOCR
+            _RAPID = RapidOCR()
+        res, _ = _RAPID(path)
+    except Exception:  # noqa: BLE001 - missing or broken reader: say so
+        return "<unread>"
+    return " / ".join(r[1] for r in (res or []) if r[2] >= 0.6 and len(r[1].strip()) >= 3)
 
 
 def main(paths):
