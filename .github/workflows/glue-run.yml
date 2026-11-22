@@ -1,0 +1,139 @@
+name: glue-run
+
+# Step 2: the full clipper (private glue in alfred-hq + gaming-clip + the Linux picture tools) on one VOD,
+# as a --test run: never posted, never logged. Clips are kept for one day as an artifact, then deleted.
+# The run's own log goes into the artifact, not the public Actions log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      vod_url:
+        description: VOD URL (Kick)
+        required: true
+      max:
+        description: Clips to make
+        default: "10"
+      model:
+        description: Speech model for the clip windows (base.en or small.en)
+        default: small.en
+
+permissions:
+  contents: read
+
+jobs:
+  clip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GC_COMMIT: 005204201f7ad4e5a48f500830c1cd3db2217bf0
+      WHISPER_TAG: v1.9.5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Glue (private alfred-hq, read only)
+        uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips
+          persist-credentials: false
+
+      - name: Work folder
+        run: |
+          if sudo mkdir -p /mnt/work 2>/dev/null; then sudo chown "$USER" /mnt/work; W=/mnt/work; else W="$RUNNER_TEMP/work"; mkdir -p "$W"; fi
+          mkdir -p "$W/tools/models" "$W/out"
+          echo "WORK=$W" >> "$GITHUB_ENV"
+          echo "CLIP_TOOLS=$W/tools" >> "$GITHUB_ENV"
+          echo "CLIPS_ROOT=$W/out" >> "$GITHUB_ENV"
+          echo "CLIP_ENGINE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "GCLIP_MODELS=$W/tools/models" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements-linux.txt
+
+      - name: Tools (ffmpeg, yt-dlp, picture checks)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg cmake > /dev/null
+          pip install -q -U "yt-dlp[default,curl-cffi]"
+          pip install -q --extra-index-url https://download.pytorch.org/whl/cpu -r tools/requirements-linux.txt
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+
+      - name: Cache whisper.cpp
+        id: wcache
+        uses: actions/cache@v4
+        with:
+          path: ~/whisper-bin
+          key: whisper-${{ env.WHISPER_TAG }}-x64-avx2-static
+
+      - name: Build whisper.cpp (CPU)
+        if: steps.wcache.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --depth 1 -b "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp /tmp/wcpp
+          cmake -S /tmp/wcpp -B /tmp/wcpp/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON > /dev/null
+          cmake --build /tmp/wcpp/build -j"$(nproc)" --target whisper-cli > /dev/null
+          mkdir -p ~/whisper-bin && cp /tmp/wcpp/build/bin/whisper-cli ~/whisper-bin/
+
+      - name: Whisper on PATH
+        run: |
+          echo "$HOME/whisper-bin" >> "$GITHUB_PATH"
+          echo "WHISPER_BIN=$HOME/whisper-bin/whisper-cli" >> "$GITHUB_ENV"
+
+      - name: Cache speech models
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORK }}/tools/models
+          key: glue-speech-base.en-small.en
+
+      - name: Cache picture models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            models
+          key: vision-models-yunet2023mar-vitb32-laion2b
+
+      - name: Models
+        run: |
+          for m in base.en small.en; do
+            f="$CLIP_TOOLS/models/ggml-$m.bin"
+            [ -s "$f" ] || curl -sSfL -o "$f" "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$m.bin"
+          done
+          mkdir -p models && f=face_detection_yunet_2023mar.onnx
+          [ -s "models/$f" ] || curl -sSfL -o "models/$f" "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/$f"
+          cp -n "models/$f" "$CLIP_TOOLS/models/" || true
+
+      - name: Engine (gaming-clip, pinned)
+        run: |
+          git clone -q https://github.com/iyansr/gaming-clip "$CLIP_TOOLS/gaming-clip"
+          git -C "$CLIP_TOOLS/gaming-clip" checkout -q "$GC_COMMIT"
+          cd "$CLIP_TOOLS/gaming-clip" && bun install --frozen-lockfile > /dev/null
+
+      - name: Make clips (--test)
+        env:
+          VOD_URL: ${{ inputs.vod_url }}
+          MAX: ${{ inputs.max }}
+          WHISPER_MODEL: ${{ inputs.model }}
+        run: |
+          set -o pipefail
+          start=$(date +%s)
+          python alfred-hq/clips/bin/run_vod.py "$VOD_URL" --test --max "$MAX" --prescan on > "$WORK/out/run.log" 2>&1 \
+            && ok=1 || ok=0
+          echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
+          tail -n 2 "$WORK/out/run.log"
+          find "$WORK/out" -name "*.mp4" | wc -l
+          [ "$ok" = 1 ]
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: glue-out
+          path: ${{ env.WORK }}/out
+          retention-days: 1
