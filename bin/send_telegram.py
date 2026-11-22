@@ -23,7 +23,7 @@ CAPTION_MAX = 1024        # Telegram's caption limit; longer text goes in a foll
 
 
 def _call(method, fields=None, files=None, tries=4):
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    token = os.environ["TELEGRAM_BOT_TOKEN"].strip()  # pasted secrets often carry a space
     fields = {k: str(v) for k, v in (fields or {}).items()}
     if files:
         boundary = uuid.uuid4().hex
@@ -73,12 +73,12 @@ def fit(path):
 
 
 def send_text(text, chat=None):
-    return _call("sendMessage", {"chat_id": chat or os.environ["TELEGRAM_CHAT_ID"], "text": text,
+    return _call("sendMessage", {"chat_id": chat or os.environ["TELEGRAM_CHAT_ID"].strip(), "text": text,
                                  "parse_mode": "HTML", "disable_web_page_preview": "true"})
 
 
 def send_video(video, caption, chat=None):
-    chat = chat or os.environ["TELEGRAM_CHAT_ID"]
+    chat = chat or os.environ["TELEGRAM_CHAT_ID"].strip()
     head, rest = (caption, "") if len(caption) <= CAPTION_MAX else split_caption(caption)
     r = _call("sendVideo", {"chat_id": chat, "caption": head, "parse_mode": "HTML", "supports_streaming": "true"},
               files={"video": fit(video)})
