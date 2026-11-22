@@ -44,6 +44,17 @@ def main(url, times):
     print("\n## OpenCLIP scenes + Tesseract text")
     subprocess.run([sys.executable, ROOT / "tools" / "scene_labels.py", *paths])
     print("clip+ocr seconds %.1f" % (time.time() - t))
+    t = time.time()
+    print("\n## Tesseract only")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sl", ROOT / "tools" / "scene_labels.py")
+    sl = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sl)
+    import os
+    os.environ["OCR"] = "tesseract"
+    for p in paths:
+        print(Path(p).name, "TESS:", sl.ocr(p)[:160])
+    print("tesseract seconds %.1f" % (time.time() - t))
 
     print("\n## OpenCV club look (neon share, mean brightness)")
     for p in paths:

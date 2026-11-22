@@ -3,3 +3,4 @@ open_clip_torch==2.32.0
 opencv-python-headless
 numpy
 pillow
+rapidocr_onnxruntime==1.4.4

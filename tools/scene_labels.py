@@ -7,6 +7,7 @@ gameplay has somewhere to go. Confidences are softmax shares, so they are calibr
 Vision's (see SCENE_LIMITS in the glue). Text: Tesseract on a 2x grey copy.
 Usage: scene_labels.py IMAGE...
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,10 +29,38 @@ LABELS = {
     "people_talking": ["people talking outdoors in daylight", "a close-up of a man's face"],
     "action": ["a shootout or police chase", "a car crash"],
 }
+NEON_MIN = 0.10
+
+
+def neon_share(path):
+    """Share of strongly saturated magenta, blue or red pixels (club lighting)."""
+    import cv2
+    import numpy as np
+    hsv = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    neon = (s > 150) & (v > 60) & ((h > 100) | (h < 8))
+    return float(np.mean(neon))
+
+
 MODEL, PRETRAINED = "ViT-B-32", "laion2b_s34b_b79k"
 
 
+_RAPID = None
+
+
 def ocr(path):
+    """On-screen text. RapidOCR (PaddleOCR models on ONNX, Apache-2.0) when installed, else Tesseract.
+    22 Nov 2026 calibration: Tesseract read only noise from stream frames; Vision read chat and signs."""
+    global _RAPID
+    if os.environ.get("OCR", "rapid") == "rapid":
+        try:
+            if _RAPID is None:
+                from rapidocr_onnxruntime import RapidOCR
+                _RAPID = RapidOCR()
+            res, _ = _RAPID(path)
+            return " / ".join(r[1] for r in (res or []) if r[2] >= 0.6 and len(r[1].strip()) >= 3)
+        except ImportError:
+            pass
     try:
         r = subprocess.run(["tesseract", path, "stdout", "--psm", "11", "-c", "tessedit_do_invert=0"],
                            capture_output=True, text=True, timeout=60)
@@ -65,6 +94,11 @@ def main(paths):
             score = {}
             for label, v in zip(names, p):
                 score[label] = score.get(label, 0.0) + v
+            # CLIP alone called his LED-lit bedroom a nightclub (0.99); clubs are also full of saturated
+            # neon. Count "nightclub" only when at least 10% of the frame is dark neon (22 Nov calibration:
+            # 5 of 8 club frames kept, 0 of 13 other frames flagged).
+            if neon_share(path) < NEON_MIN:
+                score["nightclub"] = 0.0
             top = sorted(score.items(), key=lambda kv: -kv[1])
             labs = " ".join("%s:%.2f" % kv for kv in top if kv[1] > 0.1)
             print(Path(path).name, labs, "| TEXT:", ocr(path), flush=True)
