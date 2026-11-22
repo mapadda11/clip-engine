@@ -24,26 +24,6 @@ def club_look(path):
     return float(np.mean(neon)), float(np.mean(v))
 
 
-def mediapipe_faces(paths):
-    try:
-        import cv2
-        import mediapipe as mp
-    except ImportError as e:
-        return {p: "mediapipe missing: %s" % e for p in paths}
-    out = {}
-    with mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as fd:
-        for p in paths:
-            img = cv2.imread(p)
-            r = fd.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            if not r.detections:
-                out[p] = "-"
-                continue
-            H, W = img.shape[:2]
-            b = max(r.detections, key=lambda d: d.location_data.relative_bounding_box.width).location_data.relative_bounding_box
-            out[p] = "%d %d %d %d" % (b.xmin * W, b.ymin * H, b.width * W, b.height * H)
-    return out
-
-
 def main(url, times):
     src, how = kick_source(url)
     print("source via", how)
@@ -59,12 +39,6 @@ def main(url, times):
     print("\n## YuNet faces")
     subprocess.run([sys.executable, ROOT / "tools" / "face_box.py", "--model", "models/face_detection_yunet_2023mar.onnx", *paths])
     print("yunet seconds %.1f" % (time.time() - t))
-
-    t = time.time()
-    print("\n## MediaPipe faces")
-    for p, v in mediapipe_faces(paths).items():
-        print(Path(p).name, v)
-    print("mediapipe seconds %.1f" % (time.time() - t))
 
     t = time.time()
     print("\n## OpenCLIP scenes + Tesseract text")

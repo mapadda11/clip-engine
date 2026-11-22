@@ -33,7 +33,10 @@ def main(argv):
             print(name, "-")
             continue
         x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])[:4]
-        print(name, int(x), int(y), int(fw), int(fh))
+        # YuNet's box is taller than wide (brow to chin); Vision's is a square. A square of the mean side
+        # on the same centre matched Vision within a few pixels on 13 facecam frames (22 Nov 2026).
+        side = (fw + fh) / 2
+        print(name, int(x + fw / 2 - side / 2), int(y + fh / 2 - side / 2), int(side), int(side))
 
 
 if __name__ == "__main__":
