@@ -5,10 +5,12 @@ Every stage adds its result to $WORK/out/timings.json.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 WORK = Path(os.environ.get("WORK", "work"))
@@ -37,15 +39,36 @@ def duration(path):
     return float(r.stdout.strip() or 0)
 
 
+def kick_source(url):
+    """yt-dlp's kick:vod extractor gets NOT_FOUND since Kick changed its video API (22 Nov 2026).
+    The channel's video list still gives each VOD's HLS link, so look the VOD up there."""
+    m = re.match(r"https?://(?:www\.)?kick\.com/([^/]+)/videos/([0-9a-f-]{36})", url)
+    if not m:
+        return url, "as given"
+    channel, uuid = m.groups()
+    req = urllib.request.Request(f"https://kick.com/api/v2/channels/{channel}/videos",
+                                 headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            for v in json.load(r):
+                if (v.get("video") or {}).get("uuid") == uuid and v.get("source"):
+                    return v["source"], "kick channel api"
+    except Exception as e:  # noqa: BLE001 - recorded, then yt-dlp gets the plain URL
+        print("kick api:", e)
+        return url, f"kick api failed: {e}"
+    return url, "not in channel list"
+
+
 def download():
     url = os.environ["VOD_URL"]
     t = time.time()
+    src, how = kick_source(url)
     r = run(["yt-dlp", "-N", "8", "--no-playlist", "-f", "best[height<=1080]/best", "--merge-output-format", "mp4",
-             "-o", VOD, url], capture_output=True, text=True)
+             "-o", VOD, src], capture_output=True, text=True)
     secs = time.time() - t
     tail = (r.stderr or r.stdout)[-600:]
     ok = r.returncode == 0 and VOD.exists()
-    record(download={"ok": ok, "seconds": round(secs), "url": url,
+    record(download={"ok": ok, "seconds": round(secs), "url": url, "via": how,
                      "size_mb": round(VOD.stat().st_size / 1e6) if ok else 0,
                      "hours": round(duration(VOD) / 3600, 2) if ok else 0,
                      "error": "" if ok else tail})

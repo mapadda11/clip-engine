@@ -40,7 +40,7 @@ jobs:
       - name: Tools (ffmpeg, yt-dlp)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg cmake > /dev/null
-          pip install -q -U "yt-dlp[default]"
+          pip install -q -U "yt-dlp[default,curl-cffi]"
           ffmpeg -hide_banner -encoders | grep -c libx264
           yt-dlp --version
 
