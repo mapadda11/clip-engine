@@ -25,9 +25,13 @@ CAPTION_MAX = 1024        # Telegram's caption limit; longer text goes in a foll
 
 def _secret(name, pattern):
     """The token or chat ID inside whatever was pasted (extra words or spaces from a phone copy)."""
-    m = re.search(pattern, os.environ.get(name, ""))
-    if not m:
-        raise SystemExit("%s doesn't look right: paste it again (docs/telegram-setup.md, step D)" % name)
+    raw = os.environ.get(name, "")
+    m = re.search(pattern, raw)
+    if not m:  # describe the shape only, never the value
+        shape = "%d characters, %d spaces, %s colon, %d digits, starts with %s" % (
+            len(raw), raw.count(" "), "has a" if ":" in raw else "no", sum(c.isdigit() for c in raw),
+            "a digit" if raw[:1].isdigit() else "a letter" if raw[:1].isalpha() else "a symbol or space")
+        raise SystemExit("%s doesn't look right (%s): paste it again (docs/telegram-setup.md, step D)" % (name, shape))
     return m.group()
 
 
