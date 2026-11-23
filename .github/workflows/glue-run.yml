@@ -123,6 +123,9 @@ jobs:
         run: |
           git clone -q https://github.com/iyansr/gaming-clip "$CLIP_TOOLS/gaming-clip"
           git -C "$CLIP_TOOLS/gaming-clip" checkout -q "$GC_COMMIT"
+          for f in alfred-hq/clips/patches/gaming-clip-*.patch; do  # same fixes as the Mac's engine
+            git -C "$CLIP_TOOLS/gaming-clip" apply "$GITHUB_WORKSPACE/$f" && echo "applied $(basename "$f")"
+          done
           cd "$CLIP_TOOLS/gaming-clip" && bun install --frozen-lockfile > /dev/null
 
       - name: Make clips (--test)
@@ -146,14 +149,20 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TOP: ${{ inputs.send_top }}
-        run: python3 bin/send_clips.py "$WORK/out" "practice batch, not logged yet" "$SEND_TOP"
+        run: |
+          n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
+          note="practice batch, not logged yet${n:+; $n chunk(s) skipped, couldn't transcribe}"
+          python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
       - name: Tell him it failed
         if: failure() && inputs.send == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 bin/send_telegram.py text "The clip run hit a problem, sir. Claude will look at it; nothing was posted."
+        run: |
+          why=$(grep -aE "Error|failed|FAILED|SystemExit" "$WORK/out/run.log" 2>/dev/null | grep -v onnxruntime | tail -n 1 | cut -c1-300)
+          python3 bin/send_telegram.py text "The clip run hit a problem, sir. Nothing was posted.
+          Reason: ${why:-unknown, see the run log}"
 
       - uses: actions/upload-artifact@v4
         if: always()
