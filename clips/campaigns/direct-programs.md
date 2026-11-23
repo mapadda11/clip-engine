@@ -11,6 +11,17 @@ Rule: a program link only counts if it traces to the streamer's own bio or socia
 | Jynxzi | Unknown. No direct program found. | None. Linktree is empty. Twitch About only lists a business email. | Twitch | Daily (title shows a 683/730-day streak) | **Best fallback.** Streams daily, no gambling, huge audience. Nothing pays directly, though. |
 | Joe Bartolozzi | Unknown. No direct program found. | None. The Discord on his Twitch About page (discord.gg/BAar3twb4Q) is for video and game suggestions, not clipping. | Twitch | About 80h per 30 days (Streams Charts). Streamed yesterday. | **Runner-up.** Clean react and gaming content, but streams less than Jynxzi and has no program. |
 
+## Official Discords (linked from the streamer's own channel panels, invites checked live 2026-11-23)
+These are community servers, not confirmed paid clipper programs. Look for a clips or clipper channel after joining.
+
+| Streamer | Invite | Server | Found on |
+|---|---|---|---|
+| N3on | https://discord.gg/n3on | "N3" (~28.7K members; description mentions clips) | kick.com/n3on panels |
+| Adin Ross | https://discord.gg/adinross | "Adin's Planet" (~239K) | kick.com/adinross panels |
+| LosPollosTV | https://discord.gg/snipesquad | "Pollo Lounge" (~23K) | kick.com/lospollostv panels |
+| Joe Bartolozzi | https://discord.gg/BAar3twb4Q | "Bart's JOLLY Lounge" (~288K) | twitch.tv/joe_bartolozzi/about |
+| Jynxzi | None found. About panels are behind Twitch's mature-content login gate. | | Business email only: jynxzi@rightclick.gg |
+
 ## Notes
 - Ignore third-party "clipping" Discords that mention these names but aren't linked from the streamer's own socials. Treat anything that charges a join fee or asks for account logins as a scam.
 - Typical third-party marketplace rates for comparison: about $0.50–3 per 1K (Whop Content Rewards, Vyro).
