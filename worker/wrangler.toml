@@ -1,0 +1,12 @@
+# Cloudflare Worker for the clip bot (bot-worker.js). Free plan. Setup: alfred-hq docs/telegram-webhook.md
+name = "clip-bot"
+main = "bot-worker.js"
+compatibility_date = "2026-11-01"
+
+[triggers]
+crons = ["* * * * *"]  # publish pings, checked every minute
+
+# Fill in the id that "npx wrangler kv namespace create PINGS" prints (an id, not a secret)
+[[kv_namespaces]]
+binding = "PINGS"
+id = "PUT_KV_ID_HERE"

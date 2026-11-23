@@ -7,13 +7,17 @@ on:
   schedule:
     - cron: "*/5 * * * *"  # GitHub runs these a few minutes late at busy times
   workflow_dispatch:
+    inputs:
+      update:
+        description: One message from the webhook Worker (worker/bot-worker.js), as JSON
+        default: ""
 
 permissions:
   contents: read
   actions: write  # to start or cancel glue-run
 
-concurrency:
-  group: telegram-inbox
+concurrency:  # webhook messages each get their own run (a shared group would drop all but the newest waiting one)
+  group: telegram-inbox-${{ inputs.update != '' && github.run_id || 'poll' }}
   cancel-in-progress: false
 
 jobs:
@@ -35,4 +39,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ github.token }}
           ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # saves his grades to alfred-hq clips/formula.md
+          UPDATE: ${{ inputs.update }}
+          WORKER_URL: ${{ secrets.WORKER_URL }}  # the webhook Worker, for publish pings
+          PING_KEY: ${{ secrets.PING_KEY }}
         run: python3 bin/telegram_inbox.py

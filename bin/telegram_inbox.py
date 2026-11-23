@@ -37,6 +37,7 @@ HELP = ("Clip robot commands:\n"
         "<code>clip LINK</code>  clips from a Kick or Twitch VOD link (add a number for how many, default 10)\n"
         "Add <code>grade</code> to a clip command to see the rejects too (labelled, not for posting)\n"
         "<code>3: 7/10 start faster</code>  grade clip 3 (reply to the clip itself if you can)\n"
+        "<code>pings kai 18:00 19:30</code>  after scheduling: I ping you as each clip goes live, with the submit link\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
@@ -244,6 +245,8 @@ def reply_for(text, replied_to=""):
         return do_clip(words[1:])
     if cmd == "campaigns":
         return do_campaigns()
+    if cmd in ("pings", "ping", "times"):
+        return do_pings(words[1:])
     if cmd == "status":
         return do_status()
     if cmd == "stop":
@@ -251,19 +254,87 @@ def reply_for(text, replied_to=""):
     return HELP
 
 
+PING_TZ = os.environ.get("PING_TZ", "Europe/London")
+TIME = re.compile(r"^(\d{1,2})(?::|\.)?(\d{2})?\s*(am|pm)?$")
+
+
+def ping_times(words, now=None):
+    """[(clip number, aware datetime)] for "18:00 19:30 9pm" in his time zone; a time already gone today
+    means tomorrow."""
+    import datetime
+    from zoneinfo import ZoneInfo
+    now = now or datetime.datetime.now(ZoneInfo(PING_TZ))
+    out = []
+    for w in words:
+        m = TIME.match(w)
+        if not m:
+            continue
+        h, mi = int(m.group(1)) % 24, int(m.group(2) or 0)
+        h += 12 if m.group(3) == "pm" and h < 12 else 0
+        h -= 12 if m.group(3) == "am" and h == 12 else 0
+        at = now.replace(hour=h, minute=mi, second=0, microsecond=0)
+        at += datetime.timedelta(days=1) if at <= now else datetime.timedelta(0)
+        out.append((len(out) + 1, at))
+    return out
+
+
+def do_pings(words, camps=None, post=None, now=None):
+    """'pings kai 18:00 19:30 21:00': at each time the bot sends "Clip N is live: submit now" with the
+    campaign's submit link (the Worker keeps and sends them; worker/bot-worker.js)."""
+    camps = campaigns() if camps is None else camps
+    named = next((k for w in words for k, c in camps.items() if w in (k, c["title"].lower())), None)
+    if not named:
+        ready = [k for k, c in camps.items() if joined(c)]
+        named = ready[0] if len(ready) == 1 else None
+    if not named:
+        return "Which campaign? Send <code>pings kai 18:00 19:30</code>."
+    times = ping_times(words, now)
+    if not times:
+        return "Send the publish times, e.g. <code>pings %s 18:00 19:30 21:00</code>." % esc(named)
+    link = camps[named].get("url") or ""
+    items = [{"at": int(at.timestamp()),
+              "text": "<b>Clip %d is live</b> (%s): submit now, 30 min rule.\n%s" % (n, esc(camps[named]["title"]), esc(link))}
+             for n, at in times]
+    (post or _post_pings)(items)
+    return "Pings set, sir: " + ", ".join("clip %d at %s" % (n, at.strftime("%H:%M %a")) for n, at in times) + "."
+
+
+def _post_pings(items):
+    url, key = os.environ.get("WORKER_URL", ""), os.environ.get("PING_KEY", "")
+    if not (url and key):
+        raise RuntimeError("pings need the webhook set up first (alfred-hq docs/telegram-webhook.md)")
+    req = urllib.request.Request(url.rstrip("/") + "/pings", data=json.dumps(items).encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=30).read()
+
+
+def handle(text, replied_to=""):
+    try:
+        out = reply_for(text, replied_to)
+    except Exception as e:  # noqa: BLE001 - tell him rather than fail silently
+        out = "Something went wrong: %s" % esc(str(e)[:200])
+    if out:
+        T.send_text(out)
+
+
 def main():
+    pushed = os.environ.get("UPDATE")  # 24 Nov: the webhook Worker sends one message straight here
+    if pushed:
+        u = json.loads(pushed)
+        handle(u.get("text"), u.get("reply_caption") or "")
+        print("1 pushed update")
+        return
     mine = T.chat_id()
-    ups = T._call("getUpdates", {"timeout": 0}).get("result") or []
+    try:
+        ups = T._call("getUpdates", {"timeout": 0}).get("result") or []
+    except Exception as e:  # noqa: BLE001 - with the webhook on, Telegram refuses getUpdates (409): nothing to do
+        print("getUpdates unavailable (%s); the webhook handles messages." % str(e)[:80])
+        return
     for u in ups:
         msg = u.get("message") or {}
         if str((msg.get("chat") or {}).get("id")) != mine:
             continue  # strangers who find the bot get no reply
-        try:
-            text = reply_for(msg.get("text"), (msg.get("reply_to_message") or {}).get("caption") or "")
-        except Exception as e:  # noqa: BLE001 - tell him rather than fail silently
-            text = "Something went wrong: %s" % esc(str(e)[:200])
-        if text:
-            T.send_text(text)
+        handle(msg.get("text"), (msg.get("reply_to_message") or {}).get("caption") or "")
     if ups:
         T._call("getUpdates", {"offset": ups[-1]["update_id"] + 1, "timeout": 0})  # mark read
     print("%d updates" % len(ups))
