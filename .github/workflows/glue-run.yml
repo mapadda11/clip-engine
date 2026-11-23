@@ -25,6 +25,9 @@ on:
       send_top:
         description: Send only the best N (0 = all)
         default: "0"
+      real:
+        description: Post-ready clips for a joined campaign (yes) or practice --test clips (no)
+        default: "no"
 
 permissions:
   contents: read
@@ -131,16 +134,19 @@ jobs:
           done
           cd "$CLIP_TOOLS/gaming-clip" && bun install --frozen-lockfile > /dev/null
 
-      - name: Make clips (--test)
+      - name: Make clips
         env:
           VOD_URL: ${{ inputs.vod_url }}
           MAX: ${{ inputs.max }}
           WHISPER_MODEL: ${{ inputs.model }}
           CAMPAIGN: ${{ inputs.campaign }}
+          REAL: ${{ inputs.real }}
         run: |
           set -o pipefail
           start=$(date +%s)
-          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" --test --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} > "$WORK/out/run.log" 2>&1 \
+          mode="--test"
+          [ "$REAL" = yes ] && [ -n "$CAMPAIGN" ] && mode="--no-push"  # real run: guard checks joined; log not pushed
+          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} > "$WORK/out/run.log" 2>&1 \
             && ok=1 || ok=0
           echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
           tail -n 2 "$WORK/out/run.log"
@@ -153,9 +159,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TOP: ${{ inputs.send_top }}
+          REAL: ${{ inputs.real }}
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
-          note="practice batch, not logged yet${n:+; $n chunk(s) skipped, could not transcribe}"
+          note="practice batch, not logged yet"
+          [ "$REAL" = yes ] && note="ready to post"
+          note="$note${n:+; $n chunk(s) skipped, could not transcribe}"
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
       - name: Tell him it failed
@@ -169,8 +178,15 @@ jobs:
           Reason: ${why:-unknown, see the run log}"
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.real != 'yes'
         with:
           name: glue-out
           path: ${{ env.WORK }}/out
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4  # real clips never stay on this public repo (alfred-hq CLAUDE.md rule 11)
+        if: always() && inputs.real == 'yes'
+        with:
+          name: glue-log
+          path: ${{ env.WORK }}/out/run.log
           retention-days: 1

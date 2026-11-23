@@ -166,7 +166,8 @@ def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
     if runs("in_progress") or runs("queued"):
         return "A run is already going. Send <code>status</code>, or <code>stop</code> to cancel it."
     (start or (lambda u, k, c: gh("workflow", "run", "glue-run.yml", "-f", "vod_url=" + u, "-f", "max=%d" % k,
-                                  "-f", "send=yes", "-f", "campaign=" + c)))(url, n, named)
+                                  "-f", "send=yes", "-f", "campaign=" + c,
+                                  "-f", "real=" + ("yes" if camp.get("ready") else "no"))))(url, n, named)
     return "On it, sir: %d %s clips from <b>%s</b>. About 60 to 90 min; they'll arrive here, best first." % (
         n, esc(camp["title"]), esc(title or url))
 
