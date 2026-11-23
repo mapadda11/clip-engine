@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       vod_url:
-        description: VOD URL (Kick)
+        description: VOD URL (Kick or Twitch)
         required: true
+      campaign:
+        description: Campaign settings name (alfred-hq clips/campaigns/settings), for captions, hooks and logo
+        default: ""
       max:
         description: Clips to make
         default: "10"
@@ -133,10 +136,11 @@ jobs:
           VOD_URL: ${{ inputs.vod_url }}
           MAX: ${{ inputs.max }}
           WHISPER_MODEL: ${{ inputs.model }}
+          CAMPAIGN: ${{ inputs.campaign }}
         run: |
           set -o pipefail
           start=$(date +%s)
-          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" --test --max "$MAX" --prescan on > "$WORK/out/run.log" 2>&1 \
+          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" --test --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} > "$WORK/out/run.log" 2>&1 \
             && ok=1 || ok=0
           echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
           tail -n 2 "$WORK/out/run.log"
