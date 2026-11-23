@@ -70,6 +70,13 @@ jobs:
           echo "CLIP_ENGINE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           echo "GCLIP_MODELS=$W/tools/models" >> "$GITHUB_ENV"
 
+      - name: Live progress in Telegram (one message, edited every 30 s)
+        if: inputs.send == 'yes'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: nohup python3 bin/progress.py "$WORK/out/run.log" "$WORK/progress.done" > "$WORK/progress.out" 2>&1 &
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -160,6 +167,10 @@ jobs:
           tail -n 2 "$WORK/out/run.log"
           find "$WORK/out" -name "*.mp4" | wc -l
           [ "$ok" = 1 ]
+
+      - name: Finish the progress message
+        if: always() && inputs.send == 'yes'
+        run: touch "$WORK/progress.done" && sleep 32
 
       - name: Send to Telegram
         if: inputs.send == 'yes'
