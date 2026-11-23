@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: ffmpeg (sizes and streaming prep)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
       - name: Get the clips
         env:
           GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
