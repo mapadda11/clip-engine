@@ -311,10 +311,13 @@ def _post_pings(items):
 def handle(text, replied_to=""):
     try:
         out = reply_for(text, replied_to)
-    except Exception as e:  # noqa: BLE001 - tell him rather than fail silently
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - tell him rather than fail silently
         out = "Something went wrong: %s" % esc(str(e)[:200])
     if out:
-        T.send_text(out)
+        try:
+            T.send_text(out)
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - never stop before the messages are marked read
+            print("reply failed: %s" % str(e)[:200])
 
 
 def main():

@@ -42,9 +42,17 @@ def main(folder, note="", top=0):
     if not clips:
         T.send_text("The run finished but no clips passed the filters this time.")
         return
+    failed = []
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
-        T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4)))
+        try:
+            T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4)))
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
+            failed.append(i)
+            print("clip %d not sent: %s" % (i, str(e)[:200]))
+    if failed:
+        T.send_text("Clip%s %s couldn't be sent (see the run log)." % ("s" if len(failed) > 1 else "",
+                                                                     ", ".join(map(str, failed))))
     if "practice" in note or "test" in note:
         T.send_text("That's all %d. These are test clips: tell me what you think, but don't post them yet." % len(clips))
     else:

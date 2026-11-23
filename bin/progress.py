@@ -61,12 +61,12 @@ def main(log_path, done_path):
             try:
                 T._call("editMessageText", {"chat_id": T.chat_id(), "message_id": msg, "text": body, "parse_mode": "HTML"})
                 last = body
-            except Exception:  # noqa: BLE001 - a missed edit is fine; try again in 30 s
+            except (Exception, SystemExit):  # noqa: BLE001 - a missed edit is fine; try again in 30 s
                 pass
     try:
         T._call("editMessageText", {"chat_id": T.chat_id(), "message_id": msg, "parse_mode": "HTML",
                                     "text": "<b>Clip run</b> finished in %d min." % ((time.time() - t0) // 60)})
-    except Exception:  # noqa: BLE001
+    except (Exception, SystemExit):  # noqa: BLE001
         pass
 
 
