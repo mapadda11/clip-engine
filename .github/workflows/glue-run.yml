@@ -151,7 +151,7 @@ jobs:
           SEND_TOP: ${{ inputs.send_top }}
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
-          note="practice batch, not logged yet${n:+; $n chunk(s) skipped, couldn't transcribe}"
+          note="practice batch, not logged yet${n:+; $n chunk(s) skipped, could not transcribe}"
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
       - name: Tell him it failed

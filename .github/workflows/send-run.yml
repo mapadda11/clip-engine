@@ -1,0 +1,39 @@
+name: send-run
+
+# Re-send the clips an earlier glue-run made (its artifact, kept 1 day) to his Telegram, best first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: glue-run run ID
+        required: true
+      top:
+        description: Send only the best N (0 = all)
+        default: "3"
+      note:
+        description: Short note shown on each clip
+        default: practice batch, not logged yet
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the clips
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n glue-out -D out && find out -name "*.mp4" | sort
+      - name: Send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TOP: ${{ inputs.top }}
+          NOTE: ${{ inputs.note }}
+        run: python3 bin/send_clips.py out "$NOTE" "$TOP"
