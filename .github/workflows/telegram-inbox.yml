@@ -34,4 +34,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_TOKEN: ${{ github.token }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # saves his grades to alfred-hq clips/formula.md
         run: python3 bin/telegram_inbox.py

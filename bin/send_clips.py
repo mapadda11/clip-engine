@@ -15,9 +15,25 @@ def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def caption(i, n, cap, note=""):
-    head = "<b>%d/%d</b>%s" % (i, n, (" · " + esc(note)) if note else "")
-    return "%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, esc(cap.strip()))
+def tags(mp4):
+    """[kind=... hook=... run=...] from the clip's side file: a reply to this message carries them into his grade."""
+    import json
+    import os
+    side = mp4.with_name(mp4.stem + ".clip.json")
+    try:
+        d = json.loads(side.read_text(encoding="utf-8")) if side.exists() else {}
+    except ValueError:
+        d = {}
+    t = {"kind": d.get("kind"), "hook": d.get("hook_id"), "run": os.environ.get("GITHUB_RUN_ID")}
+    return "[%s]" % " ".join("%s=%s" % (k, v) for k, v in t.items() if v)
+
+
+def caption(i, n, cap, note="", tag=""):
+    cap = cap.strip()
+    rejected = cap.startswith("REJECTED:")
+    head = "<b>%d/%d</b>%s%s" % (i, n, " · <b>REJECTED</b>" if rejected else "", (" · " + esc(note)) if note else "")
+    grade = "\n<i>Grade it: reply \"%d: 7/10 your note\"</i> %s" % (i, esc(tag))
+    return "%s%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, grade, esc(cap))
 
 
 def main(folder, note="", top=0):
@@ -28,7 +44,7 @@ def main(folder, note="", top=0):
         return
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
-        T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note))
+        T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4)))
     if "practice" in note or "test" in note:
         T.send_text("That's all %d. These are test clips: tell me what you think, but don't post them yet." % len(clips))
     else:

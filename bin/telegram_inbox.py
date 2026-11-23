@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -34,6 +35,8 @@ GLUE = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"
 HELP = ("Clip robot commands:\n"
         "<code>clip latest ruckus</code>  clips from that campaign's newest stream (any campaign name)\n"
         "<code>clip LINK</code>  clips from a Kick or Twitch VOD link (add a number for how many, default 10)\n"
+        "Add <code>grade</code> to a clip command to see the rejects too (labelled, not for posting)\n"
+        "<code>3: 7/10 start faster</code>  grade clip 3 (reply to the clip itself if you can)\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
@@ -165,9 +168,11 @@ def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
             camp["title"])
     if runs("in_progress") or runs("queued"):
         return "A run is already going. Send <code>status</code>, or <code>stop</code> to cancel it."
+    grade = "grade" in words  # 24 Nov grading mode: the rejects come too, labelled
     (start or (lambda u, k, c: gh("workflow", "run", "glue-run.yml", "-f", "vod_url=" + u, "-f", "max=%d" % k,
                                   "-f", "send=yes", "-f", "campaign=" + c,
-                                  "-f", "real=" + ("yes" if camp.get("ready") else "no"))))(url, n, named)
+                                  "-f", "real=" + ("yes" if camp.get("ready") else "no"),
+                                  "-f", "grade=" + ("yes" if grade else "no"))))(url, n, named)
     return "On it, sir: %d %s clips from <b>%s</b>. About 60 to 90 min; they'll arrive here, best first." % (
         n, esc(camp["title"]), esc(title or url))
 
@@ -189,10 +194,51 @@ def do_stop():
     return "Stopped." if going else "Nothing was running."
 
 
-def reply_for(text):
+TAGS = re.compile(r"\[((?:kind|hook|run)=[^\]]*)\]")
+
+
+def save_grade(text, replied_to="", put=None, today=None):
+    """'3: 7/10 start faster' -> one line under ## Grades in alfred-hq clips/formula.md (grades.py).
+    A reply to the clip's own message carries its [kind= hook= run=] tags. Needs ALFRED_HQ_TOKEN with
+    Contents: write on alfred-hq."""
+    import base64
+    import datetime
+    sys.path.insert(0, str(GLUE))
+    import grades as G
+    n, score, note = G.parse(text)
+    m = TAGS.search(replied_to or "")
+    tags = dict(kv.split("=", 1) for kv in (m.group(1).split() if m else []) if "=" in kv)
+    line = G.line(today or datetime.date.today().isoformat(), n, score, note, tags)
+    api = "https://api.github.com/repos/mapadda11/alfred-hq/contents/clips/formula.md"
+    call = put or _github
+    cur = call("GET", api)
+    body = G.add(base64.b64decode(cur["content"]).decode("utf-8"), line)
+    call("PUT", api, {"message": "Add his grade for clip %d" % n, "sha": cur["sha"],
+                      "content": base64.b64encode(body.encode("utf-8")).decode()})
+    return "Saved, sir: clip %d, %g/10%s. The next run uses it." % (n, score, (" (" + esc(note) + ")") if note else "")
+
+
+def _github(method, url, data=None):
+    tok = os.environ.get("ALFRED_HQ_TOKEN", "")
+    req = urllib.request.Request(url, method=method, data=json.dumps(data).encode() if data else None,
+                                 headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404) and method == "PUT":
+            raise RuntimeError("the alfred-hq key can't write yet (it needs Contents: Read and write)")
+        raise
+
+
+def reply_for(text, replied_to=""):
     words = text.strip().lower().split() if text else []
     if not words:
         return None
+    sys.path.insert(0, str(GLUE))
+    import grades as G
+    if G.parse(text):
+        return save_grade(text, replied_to)
     cmd = words[0].lstrip("/")
     if cmd == "clip":
         return do_clip(words[1:])
@@ -213,7 +259,7 @@ def main():
         if str((msg.get("chat") or {}).get("id")) != mine:
             continue  # strangers who find the bot get no reply
         try:
-            text = reply_for(msg.get("text"))
+            text = reply_for(msg.get("text"), (msg.get("reply_to_message") or {}).get("caption") or "")
         except Exception as e:  # noqa: BLE001 - tell him rather than fail silently
             text = "Something went wrong: %s" % esc(str(e)[:200])
         if text:
