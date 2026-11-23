@@ -28,6 +28,9 @@ on:
       real:
         description: Post-ready clips for a joined campaign (yes) or practice --test clips (no)
         default: "no"
+      span:
+        description: Hours of a long VOD to clip, e.g. 10-14 (empty = all; strong-crowd VODs never need it)
+        default: ""
 
 permissions:
   contents: read
@@ -38,7 +41,7 @@ concurrency:
 jobs:
   clip:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 330  # 24 Nov: public repo minutes are free; GitHub's own job limit is 360
     env:
       GC_COMMIT: 005204201f7ad4e5a48f500830c1cd3db2217bf0
       WHISPER_TAG: v1.9.5
@@ -141,12 +144,13 @@ jobs:
           WHISPER_MODEL: ${{ inputs.model }}
           CAMPAIGN: ${{ inputs.campaign }}
           REAL: ${{ inputs.real }}
+          SPAN: ${{ inputs.span }}
         run: |
           set -o pipefail
           start=$(date +%s)
           mode="--test"
           [ "$REAL" = yes ] && [ -n "$CAMPAIGN" ] && mode="--no-push"  # real run: guard checks joined; log not pushed
-          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} > "$WORK/out/run.log" 2>&1 \
+          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} ${SPAN:+--span "$SPAN"} > "$WORK/out/run.log" 2>&1 \
             && ok=1 || ok=0
           echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
           tail -n 2 "$WORK/out/run.log"
