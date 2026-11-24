@@ -1,7 +1,2 @@
-🛠 Task 17 · STEP A0: tools: PARTLY
-gh is on the PC (portable), sign-in pending. Reports come here. Route: cloud.
-
-🛠 Task 17 · STEP A1: last night's build: PARTLY
-All of last night's code ran only once, in the 23:05 run. Worker and pings never ran (they need your one-time setup). Run logs come once gh is signed in.
-
-Gates + community-clip path + Viewer pack are built and tested on fakes. Next: the first community run.
+🛠 Task 17 · STEP A2-A3: first community run started
+Top Kai community clips by views from the marathon VOD, our own cuts, every new gate on. Rendering up to 12 candidates, about 30-50 min. Nothing is sent until the Viewer has judged them.
