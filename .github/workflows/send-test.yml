@@ -37,6 +37,7 @@ jobs:
           for c in ${CLIPS//,/ }; do
             gh release download "$TAG" -R mapadda11/alfred-hq -p "$c" -D clip
             gh release download "$TAG" -R mapadda11/alfred-hq -p "${c%.mp4}.txt" -D clip || true
+            gh release download "$TAG" -R mapadda11/alfred-hq -p "${c%.mp4}.clip.json" -D clip || true  # task 17: the why line
           done
           ls clip
       - name: Send to Telegram
