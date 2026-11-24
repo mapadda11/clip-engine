@@ -216,6 +216,16 @@ def save_grade(text, replied_to="", put=None, today=None):
     body = G.add(base64.b64decode(cur["content"]).decode("utf-8"), line)
     call("PUT", api, {"message": "Add his grade for clip %d" % n, "sha": cur["sha"],
                       "content": base64.b64encode(body.encode("utf-8")).decode()})
+    try:  # task 17 (B3): his grade also goes next to the Viewer's score in clips/viewer-log.csv, if it exists
+        api2 = "https://api.github.com/repos/mapadda11/alfred-hq/contents/clips/viewer-log.csv"
+        cur2 = call("GET", api2)
+        row = "%s,%s-%d,%s,,,,,,,,,,%g,%s\n" % (today or datetime.date.today().isoformat(), tags.get("run", "?"), n,
+                                                tags.get("run", ""), score, (note or "").replace(",", ";"))
+        body2 = base64.b64decode(cur2["content"]).decode("utf-8").rstrip("\n") + "\n" + row
+        call("PUT", api2, {"message": "Add his grade for clip %d to the viewer log" % n, "sha": cur2["sha"],
+                           "content": base64.b64encode(body2.encode("utf-8")).decode()})
+    except Exception:  # noqa: BLE001 - the formula line is what counts; the viewer log is a bonus
+        pass
     return "Saved, sir: clip %d, %g/10%s. The next run uses it." % (n, score, (" (" + esc(note) + ")") if note else "")
 
 
