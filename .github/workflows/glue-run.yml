@@ -34,6 +34,12 @@ on:
       span:
         description: Hours of a long VOD to clip, e.g. 10-14 (empty = all; strong-crowd VODs never need it)
         default: ""
+      options:
+        description: "Task 17 extras, space separated: community, ref:BRANCH (alfred-hq), release:TAG (alfred-hq backup), bar:N (rule score to send)"
+        default: ""
+  push:  # task 17: a PC without gh starts a run by pushing requests/glue.env (key=value lines, same names)
+    branches: [main]
+    paths: [requests/glue.env]
 
 permissions:
   contents: read
@@ -51,10 +57,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Request (dispatch inputs, or requests/glue.env on a push)
+        env:
+          I_VOD_URL: ${{ inputs.vod_url }}
+          I_CAMPAIGN: ${{ inputs.campaign }}
+          I_MAX: ${{ inputs.max }}
+          I_MODEL: ${{ inputs.model }}
+          I_SEND: ${{ inputs.send }}
+          I_SEND_TOP: ${{ inputs.send_top }}
+          I_REAL: ${{ inputs.real }}
+          I_GRADE: ${{ inputs.grade }}
+          I_SPAN: ${{ inputs.span }}
+          I_OPTIONS: ${{ inputs.options }}
+        run: |
+          get() {  # key=value from requests/glue.env (read as text, never run)
+            grep -E "^$1=" requests/glue.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | grep -E '^[A-Za-z0-9 :/._=-]*$' || true
+          }
+          for k in VOD_URL CAMPAIGN MAX MODEL SEND SEND_TOP REAL GRADE SPAN OPTIONS; do
+            v=$(printenv "I_$k" || true)
+            [ "${{ github.event_name }}" = push ] && v=$(get "$k")
+            echo "R_$k=$v" >> "$GITHUB_ENV"
+            declare "R_$k=$v"
+          done
+          {
+            echo "R_MAX=${R_MAX:-10}"; echo "R_MODEL=${R_MODEL:-small.en}"; echo "R_SEND=${R_SEND:-no}"
+            echo "R_SEND_TOP=${R_SEND_TOP:-0}"; echo "R_REAL=${R_REAL:-no}"; echo "R_GRADE=${R_GRADE:-no}"
+            ref=main; community=no; release=; bar=0
+            for o in $R_OPTIONS; do
+              case "$o" in community) community=yes ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; esac
+            done
+            echo "R_REF=$ref"; echo "R_COMMUNITY=$community"; echo "R_RELEASE=$release"; echo "R_BAR=$bar"
+          } >> "$GITHUB_ENV"
+          [ -n "$R_VOD_URL" ] || { echo "No VOD URL"; exit 1; }
+
       - name: Glue (private alfred-hq, read only)
         uses: actions/checkout@v4
         with:
           repository: mapadda11/alfred-hq
+          ref: ${{ env.R_REF }}
           token: ${{ secrets.ALFRED_HQ_TOKEN }}
           path: alfred-hq
           sparse-checkout: clips
@@ -71,7 +111,7 @@ jobs:
           echo "GCLIP_MODELS=$W/tools/models" >> "$GITHUB_ENV"
 
       - name: Live progress in Telegram (one message, edited every 30 s)
-        if: inputs.send == 'yes'
+        if: env.R_SEND == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -149,19 +189,20 @@ jobs:
 
       - name: Make clips
         env:
-          VOD_URL: ${{ inputs.vod_url }}
-          MAX: ${{ inputs.max }}
-          WHISPER_MODEL: ${{ inputs.model }}
-          CAMPAIGN: ${{ inputs.campaign }}
-          REAL: ${{ inputs.real }}
-          SPAN: ${{ inputs.span }}
-          GRADE: ${{ inputs.grade }}
+          VOD_URL: ${{ env.R_VOD_URL }}
+          MAX: ${{ env.R_MAX }}
+          WHISPER_MODEL: ${{ env.R_MODEL }}
+          CAMPAIGN: ${{ env.R_CAMPAIGN }}
+          REAL: ${{ env.R_REAL }}
+          SPAN: ${{ env.R_SPAN }}
+          GRADE: ${{ env.R_GRADE }}
+          COMMUNITY: ${{ env.R_COMMUNITY }}
         run: |
           set -o pipefail
           start=$(date +%s)
           mode="--test"
           [ "$REAL" = yes ] && [ -n "$CAMPAIGN" ] && mode="--no-push"  # real run: guard checks joined; log not pushed
-          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} ${SPAN:+--span "$SPAN"} $([ "$GRADE" = yes ] && echo --grade) > "$WORK/out/run.log" 2>&1 \
+          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} ${SPAN:+--span "$SPAN"} $([ "$GRADE" = yes ] && echo --grade) $([ "$COMMUNITY" = yes ] && echo --community) > "$WORK/out/run.log" 2>&1 \
             && ok=1 || ok=0
           echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
           tail -n 2 "$WORK/out/run.log"
@@ -169,16 +210,17 @@ jobs:
           [ "$ok" = 1 ]
 
       - name: Finish the progress message
-        if: always() && inputs.send == 'yes'
+        if: always() && env.R_SEND == 'yes'
         run: touch "$WORK/progress.done" && sleep 32
 
       - name: Send to Telegram
-        if: inputs.send == 'yes'
+        if: env.R_SEND == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TOP: ${{ inputs.send_top }}
-          REAL: ${{ inputs.real }}
+          SEND_TOP: ${{ env.R_SEND_TOP }}
+          REAL: ${{ env.R_REAL }}
+          MIN_SCORE: ${{ env.R_BAR }}
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
           note="practice batch, not logged yet"
@@ -187,7 +229,7 @@ jobs:
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
       - name: Tell him it failed
-        if: failure() && inputs.send == 'yes'
+        if: failure() && env.R_SEND == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -196,15 +238,29 @@ jobs:
           python3 bin/send_telegram.py text "The clip run hit a problem, sir. Nothing was posted.
           Reason: ${why:-unknown, see the run log}"
 
+      - name: Back up clips and Viewer packs to a private alfred-hq release
+        if: always() && env.R_RELEASE != ''
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          TAG: ${{ env.R_RELEASE }}
+        run: |
+          gh release view "$TAG" -R mapadda11/alfred-hq > /dev/null 2>&1 || \
+            gh release create "$TAG" -R mapadda11/alfred-hq --title "$TAG" --notes "Clips and Viewer packs (task 17). Private." > /dev/null
+          mkdir -p "$WORK/up" && i=0
+          find "$WORK/out" -type f \( -name "*.mp4" -o -name "*.txt" -o -name "*.clip.json" -o -name "*.jpg" -o -name "run.log" \) | while read -r f; do
+            n="r${GITHUB_RUN_ID}-$(basename "$f")"; cp "$f" "$WORK/up/$n"
+          done
+          gh release upload "$TAG" -R mapadda11/alfred-hq --clobber "$WORK"/up/* && ls "$WORK/up" | wc -l
+
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.real != 'yes'
+        if: always() && env.R_REAL != 'yes'
         with:
           name: glue-out
           path: ${{ env.WORK }}/out
           retention-days: 1
 
       - uses: actions/upload-artifact@v4  # real clips never stay on this public repo (alfred-hq CLAUDE.md rule 11)
-        if: always() && inputs.real == 'yes'
+        if: always() && env.R_REAL == 'yes'
         with:
           name: glue-log
           path: ${{ env.WORK }}/out/run.log

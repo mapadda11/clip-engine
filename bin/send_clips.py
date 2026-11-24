@@ -4,6 +4,8 @@
 The glue names clips 01-…, 02-… in rank order and writes a .txt caption beside each. The full step 4
 format (sound, YouTube title, hook ID) comes with step 4; this is the first version.
 """
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -28,16 +30,40 @@ def tags(mp4):
     return "[%s]" % " ".join("%s=%s" % (k, v) for k, v in t.items() if v)
 
 
-def caption(i, n, cap, note="", tag=""):
+def side(mp4):
+    f = mp4.with_name(mp4.stem + ".clip.json")
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except ValueError:
+        return {}
+
+
+def why(d):
+    """Task 17: one line of why, e.g. 'viewer 8/10, crowd 4.1, +18 dB, dead 4%'."""
+    if not d.get("rule_score"):
+        return ""
+    g = d.get("gate") or {}
+    return "viewer %s/10, crowd %.1f, %+.0f dB, dead %.0f%%%s" % (
+        d.get("viewer_score") or d["rule_score"], float(d.get("crowd") or 0), float(d.get("payoff_db") or 0),
+        100 * float(g.get("dead_share") or 0), ", %s views on the source clip" % d["source_views"] if d.get("source_views") else "")
+
+
+def caption(i, n, cap, note="", tag="", line=""):
     cap = cap.strip()
     rejected = cap.startswith("REJECTED:")
     head = "<b>%d/%d</b>%s%s" % (i, n, " · <b>REJECTED</b>" if rejected else "", (" · " + esc(note)) if note else "")
+    head += ("\n" + esc(line)) if line else ""
     grade = "\n<i>Grade it: reply \"%d: 7/10 your note\"</i> %s" % (i, esc(tag))
     return "%s%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, grade, esc(cap))
 
 
 def main(folder, note="", top=0):
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
+    bar = float(os.environ.get("MIN_SCORE") or 0)
+    if bar:  # task 17: only clips the Viewer's free twin scores at the bar or above (rejects still go in grade mode)
+        keep = [c for c in clips if side(c).get("rejected") or float(side(c).get("rule_score") or 0) >= bar]
+        print("Viewer bar %.1f: %d of %d clips pass" % (bar, len(keep), len(clips)))
+        clips = keep
     clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
     if not clips:
         T.send_text("The run finished but no clips passed the filters this time.")
@@ -46,7 +72,8 @@ def main(folder, note="", top=0):
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
         try:
-            T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4)))
+            T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4),
+                                      why(side(mp4))))
         except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
             failed.append(i)
             print("clip %d not sent: %s" % (i, str(e)[:200]))
