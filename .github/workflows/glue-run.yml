@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: glue-run  # one clip run at a time; a second one waits
+  group: glue-run-${{ inputs.vod_url }}  # task 17: one run per VOD at a time; different VODs run side by side
 
 jobs:
   clip:
