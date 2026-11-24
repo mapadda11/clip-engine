@@ -34,6 +34,7 @@ MAX_CLIPS = 30
 GLUE = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"
 HELP = ("Clip robot commands:\n"
         "<code>clip latest ruckus</code>  clips from that campaign's newest stream (any campaign name)\n"
+        "<code>clip community kai 10</code>  10 clips cut from the moments viewers clipped most (fast, about 20 min)\n"
         "<code>clip LINK</code>  clips from a Kick or Twitch VOD link (add a number for how many, default 10)\n"
         "Add <code>grade</code> to a clip command to see the rejects too (labelled, not for posting)\n"
         "<code>3: 7/10 start faster</code>  grade clip 3 (reply to the clip itself if you can)\n"
@@ -146,7 +147,7 @@ def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
         if not camp["any_streamer"] and camp["channel"].lower() != ch:
             return "%s isn't %s's streamer (%s is)." % (esc(ch), esc(camp["title"]), esc(camp["channel"]))
         url = link
-    elif "latest" in words:
+    elif "latest" in words or "community" in words:  # task 17: "clip community kai 10" = newest VOD, community path
         if not named:
             ready = [k for k, c in camps.items() if joined(c)]
             if len(ready) != 1:
@@ -170,12 +171,16 @@ def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
     if runs("in_progress") or runs("queued"):
         return "A run is already going. Send <code>status</code>, or <code>stop</code> to cancel it."
     grade = "grade" in words  # 24 Nov grading mode: the rejects come too, labelled
+    import datetime
+    opts = ("community lenient bar:6 release:%s-%s" % (named, datetime.date.today().isoformat())
+            if "community" in words else "")  # task 17 Phase C: moments viewers clipped, 4 hard rules, Viewer bar 6
     (start or (lambda u, k, c: gh("workflow", "run", "glue-run.yml", "-f", "vod_url=" + u, "-f", "max=%d" % k,
                                   "-f", "send=yes", "-f", "campaign=" + c,
                                   "-f", "real=" + ("yes" if camp.get("ready") else "no"),
-                                  "-f", "grade=" + ("yes" if grade else "no"))))(url, n, named)
-    return "On it, sir: %d %s clips from <b>%s</b>. About 60 to 90 min; they'll arrive here, best first." % (
-        n, esc(camp["title"]), esc(title or url))
+                                  "-f", "grade=" + ("yes" if grade else "no"), "-f", "model=base.en" if opts else "model=small.en",
+                                  "-f", "options=" + opts)))(url, n, named)
+    return "On it, sir: %d %s clips from <b>%s</b>. %s; they'll arrive here, best first." % (
+        n, esc(camp["title"]), esc(title or url), "About 20 min (community clips)" if opts else "About 60 to 90 min")
 
 
 def do_status():
