@@ -85,12 +85,25 @@ def claude_notes(folder):
     return out
 
 
+def hook_ideas(v):
+    """The Hook Writer's ideas minus any with AI tells (task 25; alfred-hq clips/bin/humanize.py), numbered 1-3."""
+    hooks = [str(h)[:90] for h in ((v or {}).get("hooks") or [])[:3]]
+    try:
+        sys.path.insert(0, str(Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"))
+        import humanize
+        return humanize.keep(hooks)
+    except ImportError:
+        return hooks
+
+
 def claude_line(v):
     if not v:
         return ""
     s = "Claude: %s/10%s" % (v.get("score", "?"), (", " + str(v["why"])[:140]) if v.get("why") else "")
-    hooks = [str(h)[:90] for h in (v.get("hooks") or [])[:3]]
-    return s + ("\nHook ideas: " + " | ".join(hooks) if hooks else "")
+    hooks = hook_ideas(v)
+    return s + ("\nHook ideas (reply hook N 2 to use one): " + " | ".join("%d) %s" % (k, h) for k, h in enumerate(hooks, 1))
+                if hooks else "")
+
 
 
 def summary(folder):
@@ -147,7 +160,8 @@ def main(folder, note="", top=0):
             if rest:
                 T.send_text(rest)
             if not cap.strip().startswith("REJECTED:"):
-                queued.append((i, side(mp4), cap, mp4.name))
+                ideas = hook_ideas(v)  # the Hook Writer's, for "hook 3 2"
+                queued.append((i, dict(side(mp4), hook_ideas=ideas), cap, mp4.name))
         except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
             failed.append(i)
             print("clip %d not sent: %s" % (i, str(e)[:200]))
