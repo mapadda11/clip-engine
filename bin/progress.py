@@ -18,6 +18,7 @@ STEPS = [("setting up the tools", 0, 10), ("reading chat and community clips", 1
          ("finding the best windows", 15, 25), ("cutting windows and captions", 25, 70),
          ("checking moments", 70, 85), ("rendering and sending", 85, 100)]
 EVERY = 30
+STALL = 20 * 60  # 25 Nov: no new log line for this long = say so once (his "clips late" problem)
 
 
 def state(log):
@@ -49,11 +50,21 @@ def text(i, pct, found, elapsed):
 
 def main(log_path, done_path):
     t0, last = time.time(), None
+    size, moved, warned = -1, time.time(), False
     msg = T.send_text(text(0, 1, 0, 0))["result"]["message_id"]
     while not Path(done_path).exists() and time.time() - t0 < 6 * 3600:
         time.sleep(EVERY)
         log = Path(log_path).read_text(encoding="utf-8", errors="replace") if Path(log_path).exists() else ""
         i, pct, found = state(log)
+        if len(log) != size:
+            size, moved, warned = len(log), time.time(), False
+        elif log and not warned and time.time() - moved > STALL:
+            warned = True
+            try:
+                T.send_text("Heads-up, sir: the clip run hasn't moved for %d min (step %d/6: %s). It may still finish; "
+                            "send <code>status</code> to check or <code>stop</code> to cancel." % (STALL // 60, i + 1, STEPS[i][0]))
+            except (Exception, SystemExit):  # noqa: BLE001
+                pass
         if i == 0:  # tool setup prints nothing; it takes about 10 min
             pct = min(9.0, (time.time() - t0) / 66)
         body = text(i, max(pct, 1), found, time.time() - t0)

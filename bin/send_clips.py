@@ -57,6 +57,48 @@ def caption(i, n, cap, note="", tag="", line=""):
     return "%s%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, grade, esc(cap))
 
 
+def parts(i, n, cap, note="", tag="", line=""):
+    """(video caption, follow-up text or ""). 25 Nov: Telegram's 1,024 limit used to be met by cutting the HTML
+    anywhere, which could cut through <code> and make Telegram refuse the clip; now the copy-caption moves to
+    its own message instead."""
+    full = caption(i, n, cap, note, tag, line)
+    if len(full) <= T.CAPTION_MAX:
+        return full, ""
+    head = full[:full.index("\n\nCaption (tap to copy):")]
+    if len(head) > T.CAPTION_MAX:
+        head = "<b>%d/%d</b> %s" % (i, n, esc(tag))
+    return head, "Caption for %d (tap to copy):\n<code>%s</code>" % (i, esc(cap.strip()))
+
+
+def claude_notes(folder):
+    """{clip file name: verdict} from the Claude check of the top 5 (claude-check.json), when it ran."""
+    try:
+        d = json.loads((Path(folder) / "claude-check.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for c in d.get("clips", []) if isinstance(d, dict) else []:
+        if isinstance(c, dict) and c.get("file"):
+            out[Path(str(c["file"])).name] = c
+    return out
+
+
+def claude_line(v):
+    if not v:
+        return ""
+    s = "Claude: %s/10%s" % (v.get("score", "?"), (", " + str(v["why"])[:140]) if v.get("why") else "")
+    hooks = [str(h)[:90] for h in (v.get("hooks") or [])[:3]]
+    return s + ("\nHook ideas: " + " | ".join(hooks) if hooks else "")
+
+
+def summary(folder):
+    """run_vod's one-message run summary (run-summary.txt), or ""."""
+    try:
+        return (Path(folder) / "run-summary.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def reasons(folder):
     """The run log's summary lines (windows found, skips, gate rejects), so an empty batch explains itself."""
     log = Path(folder) / "run.log"
@@ -72,34 +114,56 @@ def main(folder, note="", top=0):
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
     made = clips
     bar = float(os.environ.get("MIN_SCORE") or 0)
+    under = 0
     if bar:  # task 17: only clips the Viewer's free twin scores at the bar or above (rejects still go in grade mode)
         keep = [c for c in clips if side(c).get("rejected") or float(side(c).get("rule_score") or 0) >= bar]
+        under = len(clips) - len(keep)
         print("Viewer bar %.1f: %d of %d clips pass" % (bar, len(keep), len(clips)))
         clips = keep
     clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
+    checked = claude_notes(folder)
+    if checked:  # 25 Nov (his C + light B): clips Claude says to skip go last, still sent, labelled
+        clips = sorted(clips, key=lambda c: bool(checked.get(c.name, {}).get("keep") is False))
+    backup = os.environ.get("BACKUP_NOTE", "")
     if not clips:  # task 17: a run that finds nothing says why, in one message
         scores = ", ".join("%.1f" % float(side(c).get("rule_score") or 0) for c in made)
-        under = ("%d clip%s made, Viewer scores %s, all under the bar %.1f.\n" % (len(made), "" if len(made) == 1 else "s", scores, bar)
-                 if made and bar else "")
-        T.send_text("The run finished but no clips passed this time.\n" + under + reasons(folder))
-        return
+        why_none = ("%d clip%s made, Viewer scores %s, all under the bar %.1f.\n" % (len(made), "" if len(made) == 1 else "s", scores, bar)
+                    if made and bar else "")
+        T.send_text("The run finished but no clips passed this time.\n" + why_none + (esc(summary(folder)) or reasons(folder)))
+        return 0
     failed = []
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
+        v = checked.get(mp4.name)
+        line = "\n".join(x for x in (why(side(mp4)), claude_line(v)) if x)
+        if v and v.get("keep") is False:
+            line = "Claude says skip this one. " + line
+        head, rest = parts(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4), line)
         try:
-            T.send_video(mp4, caption(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4),
-                                      why(side(mp4))))
+            T.send_video(mp4, head)
+            if rest:
+                T.send_text(rest)
         except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
             failed.append(i)
             print("clip %d not sent: %s" % (i, str(e)[:200]))
+    sent = len(clips) - len(failed)
+    end = ["Sent %d of %d clip%s." % (sent, len(clips), "" if len(clips) == 1 else "s")]
+    if under:
+        end.append("%d more were made but scored under the Viewer bar %.0f (they're in the backup)." % (under, bar))
     if failed:
-        T.send_text("Clip%s %s couldn't be sent (see the run log)." % ("s" if len(failed) > 1 else "",
-                                                                     ", ".join(map(str, failed))))
+        end.append("Not sent: %s (Telegram refused them; they're in the backup)." % ", ".join(map(str, failed)))
+    if backup:
+        end.append(backup)
+    if not checked:
+        end.append("Claude check of the top 5: didn't run (no CLAUDE_CODE_OAUTH_TOKEN in clip-engine, or it failed).")
     if "practice" in note or "test" in note:
-        T.send_text("That's all %d. These are test clips: tell me what you think, but don't post them yet." % len(clips))
+        end.append("These are test clips: tell me what you think, but don't post them yet.")
     else:
-        T.send_text("That's all %d. Post, then submit on Content Rewards within 30 min." % len(clips))
+        end.append("Post, then submit within 30 min.")
+    s = summary(folder)
+    T.send_text("\n".join(esc(x) for x in end) + ("\n\n" + esc(s) if s else ""))
+    return 1 if failed and not sent else 0
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", int(sys.argv[3]) if len(sys.argv) > 3 else 0)
+    sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", int(sys.argv[3]) if len(sys.argv) > 3 else 0))

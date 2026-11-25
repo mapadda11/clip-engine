@@ -72,7 +72,8 @@ def _call(method, fields=None, files=None, tries=4):
                 time.sleep(int(wait) + 1)
                 continue
             raise SystemExit("Telegram %s failed: %s %s" % (method, e.code, info.get("description", "")))
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            # 25 Nov: a read timeout (TimeoutError) or a dropped upload isn't a URLError; retry those too
             if attempt == tries - 1:
                 raise
             time.sleep(5 * (attempt + 1))
