@@ -70,6 +70,16 @@ class GuardsTest(unittest.TestCase):
                 else:
                     sys.modules[k] = v
 
+    def test_previews_start_the_preview_job_not_a_clip_run(self):  # task 25 step 8a
+        import telegram_inbox as I
+        started = []
+        out = I.do_previews(["togi", "5,6"], start=lambda: started.append(1))
+        self.assertEqual(started, [1])
+        self.assertIn("formats 5,6", out)
+        wf = (ROOT / ".github" / "workflows" / "format-preview.yml").read_text(encoding="utf-8")
+        self.assertNotIn("schedule:", wf)
+        self.assertNotIn("${{ inputs.vod_url }}\"", wf)  # inputs go through env, never inline in a shell line
+
     def test_each_run_has_its_own_concurrency_group(self):  # lesson 13
         self.assertIn("group: glue-run-${{ github.run_id }}", GLUE)
         self.assertNotIn("group: glue-run-${{ inputs.vod_url }}", GLUE)
