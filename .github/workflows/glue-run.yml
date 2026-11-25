@@ -86,6 +86,8 @@ jobs:
             for o in $R_OPTIONS; do
               case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
             done
+            # 25 Nov: every run is backed up to a private alfred-hq release, not just community runs
+            [ -n "$release" ] || release="${R_CAMPAIGN:-test}-$(date -u +%F)"
             echo "R_REF=$ref"; echo "R_COMMUNITY=$community"; echo "R_RELEASE=$release"; echo "R_BAR=$bar"
           } >> "$GITHUB_ENV"
           [ -n "$R_VOD_URL" ] || { echo "No VOD URL"; exit 1; }
@@ -187,7 +189,20 @@ jobs:
           done
           cd "$CLIP_TOOLS/gaming-clip" && bun install --frozen-lockfile > /dev/null
 
+      - name: His gameplay for the F8 split (alfred-hq release "gameplay")
+        continue-on-error: true  # none found: run_vod makes those clips F1 and the summary says so
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+        run: |
+          fmt="$R_FORMAT"
+          [ -n "$fmt" ] || fmt=$(grep -E '^format:' "alfred-hq/clips/campaigns/settings/${R_CAMPAIGN:-none}.txt" 2>/dev/null | head -1 | cut -d: -f2 | tr -d ' \r')
+          [ "$fmt" = F8 ] || { echo "format ${fmt:-F1}: no gameplay needed"; exit 0; }
+          mkdir -p "$WORK/gameplay" && echo "CLIP_GAMEPLAY_DIR=$WORK/gameplay" >> "$GITHUB_ENV"
+          gh release download gameplay -R mapadda11/alfred-hq -p "*.mp4" -D "$WORK/gameplay"
+          echo "$(ls "$WORK/gameplay" | wc -l) gameplay recording(s)"
+
       - name: Make clips
+        id: make
         env:
           VOD_URL: ${{ env.R_VOD_URL }}
           MAX: ${{ env.R_MAX }}
@@ -211,6 +226,52 @@ jobs:
           find "$WORK/out" -name "*.mp4" | wc -l
           [ "$ok" = 1 ]
 
+      - name: Claude checks the top 5 and writes 3 hooks each (his C + light B, 25 Nov)
+        if: always() && env.R_SEND == 'yes'
+        continue-on-error: true  # the clips still go without it; the last Telegram message says it didn't run
+        timeout-minutes: 15
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "::notice::No CLAUDE_CODE_OAUTH_TOKEN in clip-engine: Claude check skipped"; exit 0; }
+          top=$(find "$WORK/out" -name "*.mp4" | sort | while read -r f; do grep -q '"rejected": "[^"]' "${f%.mp4}.clip.json" 2>/dev/null || echo "$f"; done | head -5)
+          [ -n "$top" ] || { echo "no clips to check"; exit 0; }
+          npm install -g --silent @anthropic-ai/claude-code > /dev/null 2>&1
+          # Output goes to a file, never this public log (alfred-hq CLAUDE.md: the run's words stay private)
+          claude -p "$(cat alfred-hq/clips/bin/claude-check.md)
+
+          OUT_FILE: $WORK/out/claude-check.json
+          CLIPS:
+          $top" --model claude-sonnet-5-5 --max-turns 40 --allowedTools "Read,Write" --add-dir "$WORK" --permission-mode acceptEdits > "$WORK/claude.out" 2>&1 || true
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['clips']), 'clips checked')" "$WORK/out/claude-check.json" \
+            || { rm -f "$WORK/out/claude-check.json"; echo "Claude check gave no usable answer"; exit 1; }
+
+      - name: Back up clips and Viewer packs to a private alfred-hq release
+        if: always()
+        continue-on-error: true  # the clips still go to Telegram; the last message says the backup failed
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          TAG: ${{ env.R_RELEASE }}
+        run: |
+          n=$(find "$WORK/out" -type f \( -name "*.mp4" -o -name "*.txt" -o -name "*.clip.json" -o -name "*.jpg" -o -name "*.json" -o -name "run.log" \) | wc -l)
+          [ "$n" -gt 0 ] || { echo "BACKUP_NOTE=Backup: nothing to back up." >> "$GITHUB_ENV"; exit 0; }
+          echo "BACKUP_NOTE=Backup FAILED (release $TAG): the clips are only in this Telegram chat. Tell Claude." >> "$GITHUB_ENV"
+          gh release view "$TAG" -R mapadda11/alfred-hq > /dev/null 2>&1 || \
+            gh release create "$TAG" -R mapadda11/alfred-hq --title "$TAG" --notes "Clips and Viewer packs. Private." > /dev/null
+          mkdir -p "$WORK/up"
+          find "$WORK/out" -type f \( -name "*.mp4" -o -name "*.txt" -o -name "*.clip.json" -o -name "*.jpg" -o -name "*.json" -o -name "run.log" \) | while read -r f; do
+            cp "$f" "$WORK/up/r${GITHUB_RUN_ID}-$(basename "$f")"
+          done
+          gh release upload "$TAG" -R mapadda11/alfred-hq --clobber "$WORK"/up/*
+          echo "BACKUP_NOTE=Backup: $(ls "$WORK/up" | wc -l) files on the private alfred-hq release $TAG." >> "$GITHUB_ENV"
+
+      - name: Remember the moments used (alfred-hq clips/used.csv), so none is clipped twice
+        if: always()
+        continue-on-error: true
+        env:
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+        run: python3 alfred-hq/clips/bin/used.py add "$WORK/out" --ref "$R_REF" || echo "USED_NOTE=Used-moments list not saved this time (next run may repeat a moment)." >> "$GITHUB_ENV"
+
       - name: Finish the progress message
         if: always() && env.R_SEND == 'yes'
         run: touch "$WORK/progress.done" && sleep 32
@@ -223,6 +284,7 @@ jobs:
           SEND_TOP: ${{ env.R_SEND_TOP }}
           REAL: ${{ env.R_REAL }}
           MIN_SCORE: ${{ env.R_BAR }}
+          BACKUP_NOTE: ${{ env.BACKUP_NOTE }} ${{ env.USED_NOTE }}
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
           note="practice batch, not logged yet"
@@ -231,28 +293,23 @@ jobs:
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
       - name: Tell him it failed
-        if: failure() && env.R_SEND == 'yes'
+        # 25 Nov: cancelled() too, so a run that hits the time limit or is stopped never goes quiet
+        if: (failure() || cancelled()) && env.R_SEND == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATUS: ${{ job.status }}
+          MAKE: ${{ steps.make.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          why=$(grep -aE "Error|failed|FAILED|SystemExit" "$WORK/out/run.log" 2>/dev/null | grep -v onnxruntime | tail -n 1 | cut -c1-300)
-          python3 bin/send_telegram.py text "The clip run hit a problem, sir. Nothing was posted.
-          Reason: ${why:-unknown, see the run log}"
-
-      - name: Back up clips and Viewer packs to a private alfred-hq release
-        if: always() && env.R_RELEASE != ''
-        env:
-          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
-          TAG: ${{ env.R_RELEASE }}
-        run: |
-          gh release view "$TAG" -R mapadda11/alfred-hq > /dev/null 2>&1 || \
-            gh release create "$TAG" -R mapadda11/alfred-hq --title "$TAG" --notes "Clips and Viewer packs (task 17). Private." > /dev/null
-          mkdir -p "$WORK/up" && i=0
-          find "$WORK/out" -type f \( -name "*.mp4" -o -name "*.txt" -o -name "*.clip.json" -o -name "*.jpg" -o -name "run.log" \) | while read -r f; do
-            n="r${GITHUB_RUN_ID}-$(basename "$f")"; cp "$f" "$WORK/up/$n"
-          done
-          gh release upload "$TAG" -R mapadda11/alfred-hq --clobber "$WORK"/up/* && ls "$WORK/up" | wc -l
+          why=$(grep -aE "Error|failed|FAILED|SystemExit|Refusing" "${WORK:-/none}/out/run.log" 2>/dev/null | grep -v onnxruntime | tail -n 1 | cut -c1-300)
+          if [ "$STATUS" = cancelled ]; then head="The clip run was stopped (cancelled, or it hit the 5.5 h limit)."
+          elif [ "$MAKE" = success ]; then head="The clips were made, but a step after them failed (sending or backup)."
+          elif [ "$MAKE" = failure ]; then head="The clip run broke while making clips."
+          else head="The clip run broke while setting up, before any clips."; fi
+          python3 bin/send_telegram.py text "$head Nothing was posted, sir.
+          Reason: ${why:-not in the clip log; see $RUN_URL}
+          Any clips it made were sent above. Try again: send the same clip command."
 
       - uses: actions/upload-artifact@v4
         if: always() && env.R_REAL != 'yes'
