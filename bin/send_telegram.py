@@ -123,6 +123,12 @@ def send_video(video, caption, chat=None):
     return r
 
 
+def send_photo(photo, caption, chat=None):
+    """25 Nov: layout previews as one still (sendPhoto; caption cut to Telegram's limit)."""
+    return _call("sendPhoto", {"chat_id": chat or chat_id(), "caption": caption[:CAPTION_MAX], "parse_mode": "HTML"},
+                 files={"photo": photo})
+
+
 def split_caption(text):
     cut = text.rfind("\n", 0, CAPTION_MAX)
     cut = cut if cut > 0 else CAPTION_MAX
@@ -135,6 +141,8 @@ if __name__ == "__main__":
         send_text("Clip robot connected ✅\nClips will arrive here, best first.")
     elif cmd == "text":
         send_text(sys.argv[2])
+    elif cmd == "photo":
+        send_photo(sys.argv[2], sys.argv[3])
     elif cmd == "video":
         send_video(sys.argv[2], Path(sys.argv[3]).read_text(encoding="utf-8"))
     else:

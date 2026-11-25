@@ -1,0 +1,38 @@
+name: send-photo
+# 25 Nov 2026: one still (a layout preview) from an alfred-hq release to his Telegram, with a caption.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: alfred-hq release tag
+        default: previews
+      file:
+        description: Image file name in that release
+        required: true
+      caption:
+        description: Caption under the picture
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the picture
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          TAG: ${{ inputs.release }}
+          FILE: ${{ inputs.file }}
+        run: gh release download "$TAG" -R mapadda11/alfred-hq -p "$FILE" -D still
+      - name: Send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FILE: ${{ inputs.file }}
+          CAPTION: ${{ inputs.caption }}
+        run: python3 bin/send_telegram.py photo "still/$FILE" "$CAPTION"
