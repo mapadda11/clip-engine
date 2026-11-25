@@ -205,14 +205,14 @@ jobs:
           done
           cd "$CLIP_TOOLS/gaming-clip" && bun install --frozen-lockfile > /dev/null
 
-      - name: His gameplay for the F8 split (alfred-hq release "gameplay")
-        continue-on-error: true  # none found: run_vod makes those clips F1 and the summary says so
+      - name: His parkour gameplay, only when the recipe says bottom parkour (alfred-hq release "gameplay")
+        continue-on-error: true  # none found: run_vod gives those clips the rings/brackets filler and says so
         env:
           GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
         run: |
-          fmt="$R_FORMAT"
-          [ -n "$fmt" ] || fmt=$(grep -E '^format:' "alfred-hq/clips/campaigns/settings/${R_CAMPAIGN:-none}.txt" 2>/dev/null | head -1 | cut -d: -f2 | tr -d ' \r')
-          [ "$fmt" = F8 ] || [ "$fmt" = auto ] || { echo "format ${fmt:-F1}: no gameplay needed"; exit 0; }
+          # 25 Nov night: one recipe per streamer. Only the settings file's bottom: key decides; format options can't.
+          bottom=$(grep -E '^bottom:' "alfred-hq/clips/campaigns/settings/${R_CAMPAIGN:-none}.txt" 2>/dev/null | head -1 | cut -d: -f2 | tr -d ' \r')
+          [ "$bottom" = parkour ] || { echo "bottom ${bottom:-unset}: no parkour downloaded"; exit 0; }
           mkdir -p "$WORK/gameplay" && echo "CLIP_GAMEPLAY_DIR=$WORK/gameplay" >> "$GITHUB_ENV"
           gh release download gameplay -R mapadda11/alfred-hq -p "*.mp4" -D "$WORK/gameplay"
           echo "$(ls "$WORK/gameplay" | wc -l) gameplay recording(s)"

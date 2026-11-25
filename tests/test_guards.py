@@ -24,6 +24,13 @@ class GuardsTest(unittest.TestCase):
     def test_failure_message_also_runs_when_cancelled(self):  # lesson 2
         self.assertIn("if: (failure() || cancelled())", GLUE)
 
+    def test_parkour_only_when_the_recipe_says_so(self):  # 25 Nov night: a Lacy clip got Fortnite parkour
+        step = GLUE.split("His parkour gameplay", 1)[1].split("- name:", 1)[0]
+        self.assertIn("grep -E '^bottom:'", step)
+        self.assertIn('[ "$bottom" = parkour ]', step)
+        self.assertNotIn("R_FORMAT", step)  # a format: option can never fetch parkour
+        self.assertNotIn("^format:", step)
+
     def test_long_caption_moves_to_its_own_message(self):  # lesson 3
         head, rest = S.parts(1, 3, "hook line\n" + "word " * 400, "ready to post", "[run=1 no=1]")
         self.assertLessEqual(len(head), T.CAPTION_MAX)
