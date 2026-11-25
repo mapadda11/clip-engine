@@ -1,0 +1,43 @@
+name: plain-words
+
+# Task 25 step 8b (25 Nov 2026): a message the bot's plain code couldn't read goes to Claude (cheapest model),
+# which rewrites it into the bot's own form; the bot then says the plan back and waits for his "ok".
+# Started only by telegram_inbox.py for one of his messages. No timer. Nothing runs from here without his ok.
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: His message
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plain-words-${{ github.run_id }}
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips
+          persist-credentials: false
+      - name: Claude CLI
+        run: npm install -g --silent @anthropic-ai/claude-code > /dev/null
+      - name: Read it
+        env:
+          TEXT: ${{ inputs.text }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+        run: |
+          [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { python3 bin/send_telegram.py text "I couldn't read that one (no Claude token in clip-engine). Try: make 10 Togi clips."; exit 0; }
+          python3 bin/plain_words.py

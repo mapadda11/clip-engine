@@ -300,14 +300,26 @@ def reply_for(text, replied_to=""):
         return do_previews(words[1:])
     if cmd == "status":
         return do_status()
-    if cmd == "stop":
+    if cmd == "stop" and len(words) == 1:  # "stop 2" is a standing order (orders_bot)
         return do_stop()
     try:  # 25 Nov: rate F2 8 / views 3 1240 / scout LINK / approve 3 (alfred-hq clips/bin/crew_cmds.py)
         import crew_cmds
         crew = crew_cmds.reply(text, replied_to, call=_github)
     except ImportError:
         crew = None
-    return crew or HELP
+    if crew:
+        return crew
+    try:  # task 25 step 8b: "ok", "pause 2", or plain words -> a plan he OKs (bin/orders_bot.py)
+        import orders_bot
+        said = orders_bot.reply(text)
+    except ImportError:
+        said = None
+    if said:
+        return said
+    if len(words) >= 3 and os.environ.get("PLAIN_WORDS", "on") != "off":  # plain code couldn't read it: ask Claude
+        gh("workflow", "run", "plain-words.yml", "-f", "text=" + text.strip()[:500])
+        return "Reading that properly, sir (about a minute)..."
+    return HELP
 
 
 PING_TZ = os.environ.get("PING_TZ", "Europe/London")
@@ -384,6 +396,13 @@ def main():
         print("1 pushed update")
         return
     mine = T.chat_id()
+    try:  # task 25 step 8b: a standing order he OK'd may want its next batch (nothing else starts runs)
+        import orders_bot
+        did = orders_bot.tick()
+        if did:
+            print(did)
+    except Exception as e:  # noqa: BLE001 - never stop reading his messages
+        print("orders tick: %s" % str(e)[:150])
     try:
         ups = T._call("getUpdates", {"timeout": 0}).get("result") or []
     except Exception as e:  # noqa: BLE001 - with the webhook on, Telegram refuses getUpdates (409): nothing to do
