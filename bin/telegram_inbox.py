@@ -44,7 +44,8 @@ HELP = ("Clip robot commands:\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
-        "Runs take about 60 to 90 min. Sunday's batch still runs by itself.")
+        "<code>run formula</code>  start a crew job (formula, analyst, watcher, scout): they never run by themselves\n"
+        "Runs take about 60 to 90 min. Nothing runs on a timer: only your commands start clip runs.")
 
 
 def gh(*args):
@@ -242,7 +243,8 @@ def _github(method, url, data=None):
                                  headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
+            body = r.read()
+            return json.loads(body) if body.strip() else {}  # "start a crew job" answers 204, no body
     except urllib.error.HTTPError as e:
         if e.code in (403, 404) and method == "PUT":
             raise RuntimeError("the alfred-hq key can't write yet (it needs Contents: Read and write)")
