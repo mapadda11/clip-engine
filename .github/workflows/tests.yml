@@ -1,0 +1,20 @@
+name: tests
+
+# Task 25 (25 Nov 2026): guards for faults that must never come back (alfred-hq clips/lessons.md).
+# Read-only; runs on every push and pull request.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guards
+        run: python3 -m unittest discover -s tests -v
