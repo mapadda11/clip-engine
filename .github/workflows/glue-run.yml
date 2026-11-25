@@ -285,6 +285,7 @@ jobs:
           REAL: ${{ env.R_REAL }}
           MIN_SCORE: ${{ env.R_BAR }}
           BACKUP_NOTE: ${{ env.BACKUP_NOTE }} ${{ env.USED_NOTE }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # task 25: each clip goes on alfred-hq clips/queue.csv as "waiting"
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
           note="practice batch, not logged yet"

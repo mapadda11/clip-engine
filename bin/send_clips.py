@@ -17,8 +17,9 @@ def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def tags(mp4):
-    """[kind=... hook=... run=...] from the clip's side file: a reply to this message carries them into his grade."""
+def tags(mp4, no=None):
+    """[kind=... hook=... run=... no=...] from the clip's side file: a reply to this message carries them into his
+    grade, and (task 25) into "ok" / "no why" for exactly this clip."""
     import json
     import os
     side = mp4.with_name(mp4.stem + ".clip.json")
@@ -26,7 +27,7 @@ def tags(mp4):
         d = json.loads(side.read_text(encoding="utf-8")) if side.exists() else {}
     except ValueError:
         d = {}
-    t = {"kind": d.get("kind"), "hook": d.get("hook_id"), "run": os.environ.get("GITHUB_RUN_ID")}
+    t = {"kind": d.get("kind"), "hook": d.get("hook_id"), "run": os.environ.get("GITHUB_RUN_ID"), "no": no}
     return "[%s]" % " ".join("%s=%s" % (k, v) for k, v in t.items() if v)
 
 
@@ -53,7 +54,8 @@ def caption(i, n, cap, note="", tag="", line=""):
     rejected = cap.startswith("REJECTED:")
     head = "<b>%d/%d</b>%s%s" % (i, n, " · <b>REJECTED</b>" if rejected else "", (" · " + esc(note)) if note else "")
     head += ("\n" + esc(line)) if line else ""
-    grade = "\n<i>Grade it: reply \"%d: 7/10 your note\"</i> %s" % (i, esc(tag))
+    ask = "" if rejected else "\n<b>Waiting for your OK</b>: reply <code>ok %d</code> or <code>no %d why</code>" % (i, i)
+    grade = ask + "\n<i>Grade it: \"%d: 7/10 your note\"</i> %s" % (i, esc(tag))
     return "%s%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, grade, esc(cap))
 
 
@@ -131,22 +133,26 @@ def main(folder, note="", top=0):
                     if made and bar else "")
         T.send_text("The run finished but no clips passed this time.\n" + why_none + (esc(summary(folder)) or reasons(folder)))
         return 0
-    failed = []
+    failed, queued = [], []
     for i, mp4 in enumerate(clips, 1):
         txt = mp4.with_suffix(".txt")
         v = checked.get(mp4.name)
         line = "\n".join(x for x in (why(side(mp4)), claude_line(v)) if x)
         if v and v.get("keep") is False:
             line = "Claude says skip this one. " + line
-        head, rest = parts(i, len(clips), txt.read_text(encoding="utf-8") if txt.exists() else "", note, tags(mp4), line)
+        cap = txt.read_text(encoding="utf-8") if txt.exists() else ""
+        head, rest = parts(i, len(clips), cap, note, tags(mp4, i), line)
         try:
             T.send_video(mp4, head)
             if rest:
                 T.send_text(rest)
+            if not cap.strip().startswith("REJECTED:"):
+                queued.append((i, side(mp4), cap, mp4.name))
         except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
             failed.append(i)
             print("clip %d not sent: %s" % (i, str(e)[:200]))
     sent = len(clips) - len(failed)
+    qnote = queue(queued)
     end = ["Sent %d of %d clip%s." % (sent, len(clips), "" if len(clips) == 1 else "s")]
     if under:
         end.append("%d more were made but scored under the Viewer bar %.0f (they're in the backup)." % (under, bar))
@@ -158,11 +164,30 @@ def main(folder, note="", top=0):
         end.append("Claude check of the top 5: didn't run (no CLAUDE_CODE_OAUTH_TOKEN in clip-engine, or it failed).")
     if "practice" in note or "test" in note:
         end.append("These are test clips: tell me what you think, but don't post them yet.")
-    else:
-        end.append("Post, then submit within 30 min.")
+    end.append("Nothing is posted until you say ok. ok clips go on the Ready list on the ship." + qnote)
     s = summary(folder)
     T.send_text("\n".join(esc(x) for x in end) + ("\n\n" + esc(s) if s else ""))
     return 1 if failed and not sent else 0
+
+
+def queue(sent):
+    """Task 25: a waiting row per sent clip in alfred-hq clips/queue.csv (its clips/bin/approvals.py). Returns a note."""
+    tok = os.environ.get("ALFRED_HQ_TOKEN", "")
+    if not sent:
+        return ""
+    if not tok:
+        return " (Not on the waiting list: no ALFRED_HQ_TOKEN.)"
+    try:
+        import datetime
+        sys.path.insert(0, str(Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"))
+        import approvals as A
+        rows = A.rows_for(sent, os.environ.get("GITHUB_RUN_ID", "0"), os.environ.get("R_RELEASE", ""),
+                          datetime.date.today().isoformat(), os.environ.get("R_CAMPAIGN", ""), os.environ.get("R_FORMAT", ""))
+        A.push(rows, tok)
+        return ""
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - the clips are already sent; just say the list missed them
+        print("queue not saved: %s" % str(e)[:200])
+        return " (The waiting list didn't save this time, so ok/no for this batch may not find the clips.)"
 
 
 if __name__ == "__main__":
