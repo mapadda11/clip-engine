@@ -35,7 +35,7 @@ on:
         description: Hours of a long VOD to clip, e.g. 10-14 (empty = all; strong-crowd VODs never need it)
         default: ""
       options:
-        description: "Task 17 extras, space separated: community, ref:BRANCH (alfred-hq), release:TAG (alfred-hq backup), bar:N (rule score to send)"
+        description: "Task 17 extras, space separated: community, ref:BRANCH (alfred-hq), release:TAG (alfred-hq backup), bar:N (rule score to send), format:F1|F2|F5|F7 (task 23 preset)"
         default: ""
   push:  # task 17: a PC without gh starts a run by pushing requests/glue.env (key=value lines, same names)
     branches: [main]
@@ -84,7 +84,7 @@ jobs:
             echo "R_SEND_TOP=${R_SEND_TOP:-0}"; echo "R_REAL=${R_REAL:-no}"; echo "R_GRADE=${R_GRADE:-no}"
             ref=main; community=no; release=; bar=0
             for o in $R_OPTIONS; do
-              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; esac
+              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
             done
             echo "R_REF=$ref"; echo "R_COMMUNITY=$community"; echo "R_RELEASE=$release"; echo "R_BAR=$bar"
           } >> "$GITHUB_ENV"
@@ -198,12 +198,13 @@ jobs:
           GRADE: ${{ env.R_GRADE }}
           COMMUNITY: ${{ env.R_COMMUNITY }}
           LENIENT: ${{ env.R_LENIENT }}
+          FORMAT: ${{ env.R_FORMAT }}
         run: |
           set -o pipefail
           start=$(date +%s)
           mode="--test"
           [ "$REAL" = yes ] && [ -n "$CAMPAIGN" ] && mode="--no-push"  # real run: guard checks joined; log not pushed
-          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} ${SPAN:+--span "$SPAN"} $([ "$GRADE" = yes ] && echo --grade) $([ "$COMMUNITY" = yes ] && echo --community) $([ "$LENIENT" = yes ] && echo --lenient) > "$WORK/out/run.log" 2>&1 \
+          python -u alfred-hq/clips/bin/run_vod.py "$VOD_URL" $mode --max "$MAX" --prescan on ${CAMPAIGN:+--campaign "$CAMPAIGN"} ${SPAN:+--span "$SPAN"} $([ "$GRADE" = yes ] && echo --grade) $([ "$COMMUNITY" = yes ] && echo --community) $([ "$LENIENT" = yes ] && echo --lenient) ${FORMAT:+--format "$FORMAT"} > "$WORK/out/run.log" 2>&1 \
             && ok=1 || ok=0
           echo "minutes: $(( ($(date +%s) - start) / 60 ))" | tee -a "$WORK/out/run.log"
           tail -n 2 "$WORK/out/run.log"
