@@ -215,7 +215,7 @@ jobs:
         run: touch "$WORK/progress.done" && sleep 32
 
       - name: Send to Telegram
-        if: env.R_SEND == 'yes'
+        if: always() && env.R_SEND == 'yes'  # task 17: a run that breaks late still sends the clips it made
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

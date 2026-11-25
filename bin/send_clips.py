@@ -57,6 +57,17 @@ def caption(i, n, cap, note="", tag="", line=""):
     return "%s%s\n\nCaption (tap to copy):\n<code>%s</code>" % (head, grade, esc(cap))
 
 
+def reasons(folder):
+    """The run log's summary lines (windows found, skips, gate rejects), so an empty batch explains itself."""
+    log = Path(folder) / "run.log"
+    keep = ("Community clips:", "Skipped ", "Gate rejects:", "No new moments", "Every window failed", "Refusing")
+    try:
+        lines = [l.strip() for l in log.read_text(encoding="utf-8", errors="replace").splitlines() if l.startswith(keep)]
+    except OSError:
+        return "Why: the run log is missing; open the run on GitHub."
+    return "Why:\n" + "\n".join("- " + l[:160] for l in lines[-6:]) if lines else "Why: nothing in the log; open the run on GitHub."
+
+
 def main(folder, note="", top=0):
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
     bar = float(os.environ.get("MIN_SCORE") or 0)
@@ -65,8 +76,8 @@ def main(folder, note="", top=0):
         print("Viewer bar %.1f: %d of %d clips pass" % (bar, len(keep), len(clips)))
         clips = keep
     clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
-    if not clips:
-        T.send_text("The run finished but no clips passed the filters this time.")
+    if not clips:  # task 17: a run that finds nothing says why, in one message
+        T.send_text("The run finished but no clips passed this time.\n" + reasons(folder))
         return
     failed = []
     for i, mp4 in enumerate(clips, 1):
