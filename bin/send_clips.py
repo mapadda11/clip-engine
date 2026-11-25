@@ -70,6 +70,7 @@ def reasons(folder):
 
 def main(folder, note="", top=0):
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
+    made = clips
     bar = float(os.environ.get("MIN_SCORE") or 0)
     if bar:  # task 17: only clips the Viewer's free twin scores at the bar or above (rejects still go in grade mode)
         keep = [c for c in clips if side(c).get("rejected") or float(side(c).get("rule_score") or 0) >= bar]
@@ -77,7 +78,10 @@ def main(folder, note="", top=0):
         clips = keep
     clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
     if not clips:  # task 17: a run that finds nothing says why, in one message
-        T.send_text("The run finished but no clips passed this time.\n" + reasons(folder))
+        scores = ", ".join("%.1f" % float(side(c).get("rule_score") or 0) for c in made)
+        under = ("%d clip%s made, Viewer scores %s, all under the bar %.1f.\n" % (len(made), "" if len(made) == 1 else "s", scores, bar)
+                 if made and bar else "")
+        T.send_text("The run finished but no clips passed this time.\n" + under + reasons(folder))
         return
     failed = []
     for i, mp4 in enumerate(clips, 1):
