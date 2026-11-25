@@ -1,0 +1,67 @@
+name: format-preview
+
+# Task 25 step 8a (25 Nov 2026): his layout-first rule. Renders one still and a 4 s sample per format from the
+# streamer's newest stream, sends them to his Telegram for "layout N ok", and marks them waiting on the ship.
+# Started only by him: "previews togi" on Telegram (bin/telegram_inbox.py) or "Run workflow" here. No timer.
+on:
+  workflow_dispatch:
+    inputs:
+      campaign:
+        description: Campaign settings name (alfred-hq clips/campaigns/settings)
+        default: togi
+      vod_url:
+        description: Optional Kick/Twitch VOD link (default the newest finished stream)
+        default: ""
+      formats:
+        description: Which of his formats, comma separated
+        default: "1,2,3,4,5,6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: format-preview-${{ github.run_id }}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Glue (private alfred-hq, read only)
+        uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips
+          persist-credentials: false
+      - name: Tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-inter > /dev/null
+          pip install -q -U "yt-dlp[default,curl-cffi]"
+      - name: His gameplay for format 4, if any is uploaded (first recording only)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/previews/gameplay"
+          f=$(gh release view gameplay -R mapadda11/alfred-hq --json assets -q '[.assets[] | select(.name|endswith(".mp4"))][0].name' || true)
+          [ -n "$f" ] && gh release download gameplay -R mapadda11/alfred-hq -p "$f" -D "$RUNNER_TEMP/previews/gameplay" || echo "No parkour yet: format 4 shows a labelled stand-in."
+      - name: Previews
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          CLIP_GAMEPLAY_DIR: ${{ runner.temp }}/previews/gameplay
+          I_CAMPAIGN: ${{ inputs.campaign }}
+          I_VOD_URL: ${{ inputs.vod_url }}
+          I_FORMATS: ${{ inputs.formats }}
+        run: python3 bin/format_preview.py "$I_CAMPAIGN" "$I_VOD_URL" "$I_FORMATS"
+      - name: Tell him it failed
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 -c "import sys; sys.path.insert(0,'bin'); import send_telegram as T; T.send_text('Layout previews failed this time (GitHub run ${{ github.run_id }}). Tell Claude.')"

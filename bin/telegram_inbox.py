@@ -29,6 +29,8 @@ import send_telegram as T  # noqa: E402
 REPO = os.environ.get("GITHUB_REPOSITORY", "mapadda11/clip-engine")
 KICK_VOD = re.compile(r"kick\.com/([A-Za-z0-9_-]+)/videos/([0-9a-f-]{36})")
 TWITCH_VOD = re.compile(r"twitch\.tv/videos/(\d+)")
+YOUTUBE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com/(watch\?v=|live/|shorts/)|youtu\.be/)[\w-]+", re.I)
+PC_RUN = "https://api.github.com/repos/mapadda11/alfred-hq/actions/workflows/youtube-run.yml/dispatches"
 TWITCH_CID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # Twitch's public web client id
 MAX_CLIPS = 30
 GLUE = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"
@@ -39,8 +41,12 @@ HELP = ("Clip robot commands:\n"
         "Add <code>grade</code> to a clip command to see the rejects too (labelled, not for posting)\n"
         "<code>3: 7/10 start faster</code>  grade clip 3 (reply to the clip itself if you can)\n"
         "<code>pings kai 18:00 19:30</code>  after scheduling: I ping you as each clip goes live, with the submit link\n"
+        "<code>ok 3</code> / <code>no 3 why</code>  clip 3 of the latest batch: Ready list, or rejected (reply to the clip for an older one)\n"
+        "<code>posted 3</code>  you posted it\n"
         "<code>views 3 1240</code>  clip 3 of the latest batch got 1,240 views (feeds the Analyst)\n"
         "<code>rate F8 7</code>  rate a format 1-10 (7+ joins the split test)\n"
+        "<code>previews togi</code>  layout previews of his formats from the newest stream (no clips made)\n"
+        "<code>layout 5 ok</code> / <code>layout 5: change</code>  OK a format's layout, or say what to change\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
@@ -129,12 +135,26 @@ def esc(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
+def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None, raw=None):
     """Reply text for a clip command; starts glue-run when the request is good."""
     camps = campaigns() if camps is None else camps
     n = next((int(w) for w in words if w.isdigit()), 10)
     n = max(1, min(n, MAX_CLIPS))
     named = next((k for w in words for k, c in camps.items() if w in (k, c["title"].lower())), None)
+    yt = next((w for w in (raw or words) if YOUTUBE.match(w)), None)
+    if yt:  # task 25 step 7: YouTube blocks cloud servers, so these run on his PC (alfred-hq youtube-run.yml)
+        if named and not joined(camps[named]) and "practice" not in words:
+            return "You haven't joined %s yet. Add <code>practice</code> for test clips." % esc(camps[named]["title"])
+        body = {"ref": "main", "inputs": {"vod_url": yt, "campaign": named or "", "max": str(n),
+                                          "real": "yes" if named and camps[named].get("ready") else "no"}}
+        try:
+            (start or (lambda b: _github("POST", PC_RUN, b)))(body)
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, "code", None) in (403, 404):
+                return "I couldn't start it: the alfred-hq key needs <b>Actions: Read and write</b> to start PC runs."
+            raise
+        return ("Sent to your PC: %d clips from that YouTube link. Open Ubuntu if it's asleep; clips arrive here "
+                "for your OK (usually 30 to 90 min)." % n)
     link = next((w for w in words if "kick.com" in w or "twitch.tv" in w), None)
     if link:
         found = link_channel(link, kick, gql)
@@ -184,6 +204,16 @@ def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
                                   "-f", "options=" + opts)))(url, n, named)
     return "On it, sir: %d %s clips from <b>%s</b>. %s; they'll arrive here, best first." % (
         n, esc(camp["title"]), esc(title or url), "About 20 min (community clips)" if opts else "About 60 to 90 min")
+
+
+def do_previews(words, start=None):
+    """Task 25 step 8a: "previews togi [LINK] [5,6]" renders his formats' layouts (format-preview.yml); no clips."""
+    camp = next((w for w in words if not w.startswith("http") and not w[0].isdigit()), "togi")
+    link = next((w for w in words if w.startswith("http")), "")
+    nums = next((w for w in words if w[0].isdigit()), "1,2,3,4,5,6")
+    (start or (lambda: gh("workflow", "run", "format-preview.yml", "-f", "campaign=" + camp, "-f", "vod_url=" + link,
+                          "-f", "formats=" + nums)))()
+    return "Making layout previews for %s (formats %s). About 5 to 10 min; each comes here for your OK." % (camp, nums)
 
 
 def do_status():
@@ -261,21 +291,35 @@ def reply_for(text, replied_to=""):
         return save_grade(text, replied_to)
     cmd = words[0].lstrip("/")
     if cmd == "clip":
-        return do_clip(words[1:])
+        return do_clip(words[1:], raw=text.strip().split()[1:])  # raw: YouTube ids are case-sensitive
     if cmd == "campaigns":
         return do_campaigns()
     if cmd in ("pings", "ping", "times"):
         return do_pings(words[1:])
+    if cmd in ("previews", "preview", "layouts"):
+        return do_previews(words[1:])
     if cmd == "status":
         return do_status()
-    if cmd == "stop":
+    if cmd == "stop" and len(words) == 1:  # "stop 2" is a standing order (orders_bot)
         return do_stop()
     try:  # 25 Nov: rate F2 8 / views 3 1240 / scout LINK / approve 3 (alfred-hq clips/bin/crew_cmds.py)
         import crew_cmds
         crew = crew_cmds.reply(text, replied_to, call=_github)
     except ImportError:
         crew = None
-    return crew or HELP
+    if crew:
+        return crew
+    try:  # task 25 step 8b: "ok", "pause 2", or plain words -> a plan he OKs (bin/orders_bot.py)
+        import orders_bot
+        said = orders_bot.reply(text)
+    except ImportError:
+        said = None
+    if said:
+        return said
+    if len(words) >= 3 and os.environ.get("PLAIN_WORDS", "on") != "off":  # plain code couldn't read it: ask Claude
+        gh("workflow", "run", "plain-words.yml", "-f", "text=" + text.strip()[:500])
+        return "Reading that properly, sir (about a minute)..."
+    return HELP
 
 
 PING_TZ = os.environ.get("PING_TZ", "Europe/London")
@@ -352,6 +396,13 @@ def main():
         print("1 pushed update")
         return
     mine = T.chat_id()
+    try:  # task 25 step 8b: a standing order he OK'd may want its next batch (nothing else starts runs)
+        import orders_bot
+        did = orders_bot.tick()
+        if did:
+            print(did)
+    except Exception as e:  # noqa: BLE001 - never stop reading his messages
+        print("orders tick: %s" % str(e)[:150])
     try:
         ups = T._call("getUpdates", {"timeout": 0}).get("result") or []
     except Exception as e:  # noqa: BLE001 - with the webhook on, Telegram refuses getUpdates (409): nothing to do

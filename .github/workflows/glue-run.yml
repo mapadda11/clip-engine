@@ -45,7 +45,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: glue-run-${{ inputs.vod_url }}  # task 17: one run per VOD at a time; different VODs run side by side
+  # Task 25 (25 Nov): each run its own group. A shared per-VOD group made a second run for the same VOD wait,
+  # and GitHub drops a waiting run with no message (alfred-hq clips/lessons.md 13). The bot already refuses a
+  # second run while one is going ("status" / "stop").
+  group: glue-run-${{ github.run_id }}
 
 jobs:
   clip:
@@ -101,6 +104,19 @@ jobs:
           path: alfred-hq
           sparse-checkout: clips
           persist-credentials: false
+
+      - name: Check before the run (task 25; a Telegram message instead of 25 wasted minutes)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # reads the private gameplay release
+          RUNS_TOKEN: ${{ github.token }}           # reads this repo's last runs
+        run: |
+          [ -f alfred-hq/clips/bin/preflight.py ] || { echo "No preflight.py on this alfred-hq ref; skipped."; exit 0; }
+          python3 alfred-hq/clips/bin/preflight.py --campaign "$R_CAMPAIGN" --format "${R_FORMAT:-}" --real "${R_REAL:-no}" \
+            || { echo "R_SEND=no" >> "$GITHUB_ENV"; exit 1; }  # it already told him why; no second failure message
 
       - name: Work folder
         run: |
@@ -285,6 +301,7 @@ jobs:
           REAL: ${{ env.R_REAL }}
           MIN_SCORE: ${{ env.R_BAR }}
           BACKUP_NOTE: ${{ env.BACKUP_NOTE }} ${{ env.USED_NOTE }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # task 25: each clip goes on alfred-hq clips/queue.csv as "waiting"
         run: |
           n=$(grep -aoE "Skipped [0-9]+ windows? the transcriber" "$WORK/out/run.log" | grep -oE "[0-9]+" | head -1)
           note="practice batch, not logged yet"
