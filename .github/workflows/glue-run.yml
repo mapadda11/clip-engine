@@ -212,7 +212,7 @@ jobs:
         run: |
           fmt="$R_FORMAT"
           [ -n "$fmt" ] || fmt=$(grep -E '^format:' "alfred-hq/clips/campaigns/settings/${R_CAMPAIGN:-none}.txt" 2>/dev/null | head -1 | cut -d: -f2 | tr -d ' \r')
-          [ "$fmt" = F8 ] || { echo "format ${fmt:-F1}: no gameplay needed"; exit 0; }
+          [ "$fmt" = F8 ] || [ "$fmt" = auto ] || { echo "format ${fmt:-F1}: no gameplay needed"; exit 0; }
           mkdir -p "$WORK/gameplay" && echo "CLIP_GAMEPLAY_DIR=$WORK/gameplay" >> "$GITHUB_ENV"
           gh release download gameplay -R mapadda11/alfred-hq -p "*.mp4" -D "$WORK/gameplay"
           echo "$(ls "$WORK/gameplay" | wc -l) gameplay recording(s)"
