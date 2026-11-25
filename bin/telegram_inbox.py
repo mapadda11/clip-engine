@@ -29,6 +29,8 @@ import send_telegram as T  # noqa: E402
 REPO = os.environ.get("GITHUB_REPOSITORY", "mapadda11/clip-engine")
 KICK_VOD = re.compile(r"kick\.com/([A-Za-z0-9_-]+)/videos/([0-9a-f-]{36})")
 TWITCH_VOD = re.compile(r"twitch\.tv/videos/(\d+)")
+YOUTUBE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com/(watch\?v=|live/|shorts/)|youtu\.be/)[\w-]+", re.I)
+PC_RUN = "https://api.github.com/repos/mapadda11/alfred-hq/actions/workflows/youtube-run.yml/dispatches"
 TWITCH_CID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # Twitch's public web client id
 MAX_CLIPS = 30
 GLUE = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"
@@ -133,12 +135,26 @@ def esc(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None):
+def do_clip(words, camps=None, kick=kick_list, gql=twitch_gql, start=None, raw=None):
     """Reply text for a clip command; starts glue-run when the request is good."""
     camps = campaigns() if camps is None else camps
     n = next((int(w) for w in words if w.isdigit()), 10)
     n = max(1, min(n, MAX_CLIPS))
     named = next((k for w in words for k, c in camps.items() if w in (k, c["title"].lower())), None)
+    yt = next((w for w in (raw or words) if YOUTUBE.match(w)), None)
+    if yt:  # task 25 step 7: YouTube blocks cloud servers, so these run on his PC (alfred-hq youtube-run.yml)
+        if named and not joined(camps[named]) and "practice" not in words:
+            return "You haven't joined %s yet. Add <code>practice</code> for test clips." % esc(camps[named]["title"])
+        body = {"ref": "main", "inputs": {"vod_url": yt, "campaign": named or "", "max": str(n),
+                                          "real": "yes" if named and camps[named].get("ready") else "no"}}
+        try:
+            (start or (lambda b: _github("POST", PC_RUN, b)))(body)
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, "code", None) in (403, 404):
+                return "I couldn't start it: the alfred-hq key needs <b>Actions: Read and write</b> to start PC runs."
+            raise
+        return ("Sent to your PC: %d clips from that YouTube link. Open Ubuntu if it's asleep; clips arrive here "
+                "for your OK (usually 30 to 90 min)." % n)
     link = next((w for w in words if "kick.com" in w or "twitch.tv" in w), None)
     if link:
         found = link_channel(link, kick, gql)
@@ -275,7 +291,7 @@ def reply_for(text, replied_to=""):
         return save_grade(text, replied_to)
     cmd = words[0].lstrip("/")
     if cmd == "clip":
-        return do_clip(words[1:])
+        return do_clip(words[1:], raw=text.strip().split()[1:])  # raw: YouTube ids are case-sensitive
     if cmd == "campaigns":
         return do_campaigns()
     if cmd in ("pings", "ping", "times"):

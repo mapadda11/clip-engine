@@ -80,6 +80,17 @@ class GuardsTest(unittest.TestCase):
         self.assertNotIn("schedule:", wf)
         self.assertNotIn("${{ inputs.vod_url }}\"", wf)  # inputs go through env, never inline in a shell line
 
+    def test_youtube_links_go_to_his_pc_with_their_case_kept(self):  # task 25 step 7
+        import telegram_inbox as I
+        camps = {"togi": {"title": "Togi", "labels": ["campaign:joined"], "state": "OPEN", "ready": False,
+                          "channel": "togi", "any_streamer": False}}
+        sent = []
+        out = I.do_clip(["https://youtu.be/abcdef", "togi", "5"], camps=camps, start=sent.append,
+                        raw=["https://youtu.be/AbCdEf", "togi", "5"])
+        self.assertIn("Sent to your PC: 5 clips", out)
+        self.assertEqual(sent[0]["inputs"]["vod_url"], "https://youtu.be/AbCdEf")
+        self.assertEqual(sent[0]["inputs"]["campaign"], "togi")
+
     def test_each_run_has_its_own_concurrency_group(self):  # lesson 13
         self.assertIn("group: glue-run-${{ github.run_id }}", GLUE)
         self.assertNotIn("group: glue-run-${{ inputs.vod_url }}", GLUE)
