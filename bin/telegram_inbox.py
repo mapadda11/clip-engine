@@ -33,12 +33,14 @@ TWITCH_CID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # Twitch's public web client id
 MAX_CLIPS = 30
 GLUE = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"
 HELP = ("Clip robot commands:\n"
-        "<code>clip latest ruckus</code>  clips from that campaign's newest stream (any campaign name)\n"
+        "<code>clip latest togi</code>  clips from that campaign's newest stream (any campaign name)\n"
         "<code>clip community kai 10</code>  10 clips cut from the moments viewers clipped most (fast, about 20 min)\n"
         "<code>clip LINK</code>  clips from a Kick or Twitch VOD link (add a number for how many, default 10)\n"
         "Add <code>grade</code> to a clip command to see the rejects too (labelled, not for posting)\n"
         "<code>3: 7/10 start faster</code>  grade clip 3 (reply to the clip itself if you can)\n"
         "<code>pings kai 18:00 19:30</code>  after scheduling: I ping you as each clip goes live, with the submit link\n"
+        "<code>views 3 1240</code>  clip 3 of the latest batch got 1,240 views (feeds the Analyst)\n"
+        "<code>rate F8 7</code>  rate a format 1-10 (7+ joins the split test)\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
@@ -266,7 +268,12 @@ def reply_for(text, replied_to=""):
         return do_status()
     if cmd == "stop":
         return do_stop()
-    return HELP
+    try:  # 25 Nov: rate F2 8 / views 3 1240 / scout LINK / approve 3 (alfred-hq clips/bin/crew_cmds.py)
+        import crew_cmds
+        crew = crew_cmds.reply(text, replied_to, call=_github)
+    except ImportError:
+        crew = None
+    return crew or HELP
 
 
 PING_TZ = os.environ.get("PING_TZ", "Europe/London")
