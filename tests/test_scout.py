@@ -87,6 +87,13 @@ class ScoutTest(unittest.TestCase):
         self.assertEqual(got, [1])
         self.assertEqual(S.FRESH, 8)
 
+    def test_an_empty_twitch_answer_is_asked_again(self):
+        # 26 Nov review: Twitch once answered "no streams" for Lacy on the runner, then fine a minute later
+        from unittest import mock
+        answers = [{}, {"user": {"videos": {"edges": [{"node": {"id": "300", "status": "RECORDED"}}]}}}]
+        with mock.patch.object(S.I, "twitch_gql", lambda q: answers.pop(0)), mock.patch("time.sleep"):
+            self.assertEqual(S.finished_vods(LACY), [V[0]])
+
     def test_glue_run_retries_once_then_tells_him(self):
         wf = (ROOT / ".github" / "workflows" / "glue-run.yml").read_text(encoding="utf-8")
         self.assertIn("run-name: clip ${{ inputs.campaign", wf)
