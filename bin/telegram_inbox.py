@@ -50,8 +50,9 @@ HELP = ("Clip robot commands:\n"
         "<code>campaigns</code>  the campaigns I know\n"
         "<code>status</code>  is a run going\n"
         "<code>stop</code>  cancel the run\n"
-        "<code>run formula</code>  start a crew job (formula, analyst, watcher, scout): they never run by themselves\n"
-        "Runs take about 60 to 90 min. Nothing runs on a timer: only your commands start clip runs.")
+        "<code>run coach</code>  start a crew job now (they also run on their own times; see the Crew room)\n"
+        "Runs take about 60 to 90 min. The Scout starts batches by itself every 2 h (new streams, and 8 fresh Lacy "
+        "and 8 fresh Togi clips by 15:30). Nothing is ever posted without you.")
 
 
 def gh(*args):
