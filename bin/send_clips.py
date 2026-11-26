@@ -125,84 +125,109 @@ def reasons(folder):
     return "Why:\n" + "\n".join("- " + l[:160] for l in lines[-6:]) if lines else "Why: nothing in the log; open the run on GitHub."
 
 
-def main(folder, note="", top=0):
+def glue():
+    """alfred-hq's clips/bin/approvals.py (the queue and the batch ranking)."""
+    sys.path.insert(0, str(Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"))
+    import approvals
+    return approvals
+
+
+def candidates(folder, top=0):
+    """The run's clips for the desk, best first: Viewer bar, SEND_TOP, and no engine REJECTED clips."""
     clips = sorted(Path(folder).rglob("*.mp4"), key=lambda p: p.name)
-    made = clips
     bar = float(os.environ.get("MIN_SCORE") or 0)
-    under = 0
-    if bar:  # task 17: only clips the Viewer's free twin scores at the bar or above (rejects still go in grade mode)
-        keep = [c for c in clips if side(c).get("rejected") or float(side(c).get("rule_score") or 0) >= bar]
-        under = len(clips) - len(keep)
-        print("Viewer bar %.1f: %d of %d clips pass" % (bar, len(keep), len(clips)))
-        clips = keep
+    if bar:  # task 17: only clips the Viewer's free twin scores at the bar or above
+        clips = [c for c in clips if float(side(c).get("rule_score") or 0) >= bar]
     clips = clips[:top] if top else clips  # names start 01-, 02-, ... in rank order
-    checked = claude_notes(folder)
-    if checked:  # 25 Nov (his C + light B): clips Claude says to skip go last, still sent, labelled
-        clips = sorted(clips, key=lambda c: bool(checked.get(c.name, {}).get("keep") is False))
-    backup = os.environ.get("BACKUP_NOTE", "")
-    if not clips:  # task 17: a run that finds nothing says why, in one message
-        scores = ", ".join("%.1f" % float(side(c).get("rule_score") or 0) for c in made)
-        why_none = ("%d clip%s made, Viewer scores %s, all under the bar %.1f.\n" % (len(made), "" if len(made) == 1 else "s", scores, bar)
-                    if made and bar else "")
-        T.send_text("The run finished but no clips passed this time.\n" + why_none + (esc(summary(folder)) or reasons(folder)))
-        return 0
-    failed, queued = [], []
-    for i, mp4 in enumerate(clips, 1):
+    out = []
+    for mp4 in clips:
         txt = mp4.with_suffix(".txt")
-        v = checked.get(mp4.name)
-        line = "\n".join(x for x in (why(side(mp4)), claude_line(v)) if x)
-        if v and v.get("keep") is False:
-            line = "Claude says skip this one. " + line
         cap = txt.read_text(encoding="utf-8") if txt.exists() else ""
-        head, rest = parts(i, len(clips), cap, note, tags(mp4, i), line)
-        try:
-            T.send_video(mp4, head)
-            if rest:
-                T.send_text(rest)
-            if not cap.strip().startswith("REJECTED:"):
-                ideas = hook_ideas(v)  # the Hook Writer's, for "hook 3 2"
-                queued.append((i, dict(side(mp4), hook_ideas=ideas), cap, mp4.name))
-        except (Exception, SystemExit) as e:  # noqa: BLE001 - one bad clip must not stop the rest of the batch
-            failed.append(i)
-            print("clip %d not sent: %s" % (i, str(e)[:200]))
-    sent = len(clips) - len(failed)
-    qnote = queue(queued)
-    end = ["Sent %d of %d clip%s." % (sent, len(clips), "" if len(clips) == 1 else "s")]
-    if under:
-        end.append("%d more were made but scored under the Viewer bar %.0f (they're in the backup)." % (under, bar))
-    if failed:
-        end.append("Not sent: %s (Telegram refused them; they're in the backup)." % ", ".join(map(str, failed)))
-    if backup:
-        end.append(backup)
+        if not cap.strip().startswith("REJECTED:") and not side(mp4).get("rejected"):
+            out.append((mp4, cap))
+    return out
+
+
+def desk_rows(folder, top=0):
+    """[(no, side + Claude's verdict, caption, file name)] for approvals.rows_for. Claude's score and one-line why
+    rank the batch; keep = false (his Lacy rules: nudity, no payoff, no sound, dead start...) = rejected."""
+    checked = claude_notes(folder)
+    out = []
+    for i, (mp4, cap) in enumerate(candidates(folder, top), 1):
+        v = checked.get(mp4.name) or {}
+        d = dict(side(mp4), hook_ideas=hook_ideas(v))
+        if v.get("score") not in (None, ""):
+            d["claude_score"] = v["score"]
+        d["claude_why"] = str(v.get("why") or "") or why(side(mp4))
+        if v.get("keep") is False:
+            d["claude_reject"] = True
+        out.append((i, d, cap, mp4.name))
+    return out, bool(checked)
+
+
+def main(folder, note="", top=0):
+    """26 Nov 2026 (his clean slate): one Telegram message per batch, never one per clip. Every clip goes on the
+    alfred-hq queue; the batch is ranked by the Claude check's score (best 15 new, the rest "low", numbered best
+    first) and one message says "N new clips (X to Y) ready in the Clip Desk" with the link.
+    HOLD=yes (glue-run option hold): this run is one part of a bigger batch (several VODs): queue only, no message;
+    `send_clips.py --finish RUN,RUN` ranks that batch and sends its one message."""
+    rows, checked = desk_rows(folder, top)
+    hold = os.environ.get("HOLD") == "yes"
+    run = os.environ.get("GITHUB_RUN_ID", "0")
+    if not rows:  # task 17: a run that finds nothing says why, in one message
+        if hold:
+            print("no clips for the desk from this run")
+            return 0
+        T.send_text("The run finished but no clips passed this time.\n" + (esc(summary(folder)) or reasons(folder)))
+        return 0
+    batch, err = queue(rows, finish=() if hold else (run,))
+    if hold:
+        print("%d clips held for the batch (%s)" % (len(rows), err or "queued"))
+        return 1 if err else 0
+    return send_batch(batch, err, checked)
+
+
+def send_batch(batch, err="", checked=True):
+    """The batch's one message (approvals.batch_text), or why the desk didn't get it."""
+    if err:
+        T.send_text("A clip batch was made but the Clip Desk didn't save it: %s" % esc(err))
+        return 1
+    text = esc(glue().batch_text(batch))
     if not checked:
-        end.append("Claude check of the top 5: didn't run (no CLAUDE_CODE_OAUTH_TOKEN in clip-engine, or it failed).")
-    if "practice" in note or "test" in note:
-        end.append("These are test clips: tell me what you think, but don't post them yet.")
-    end.append("Nothing is posted until you say ok. ok clips go on the Ready list on the ship." + qnote)
-    s = summary(folder)
-    T.send_text("\n".join(esc(x) for x in end) + ("\n\n" + esc(s) if s else ""))
-    return 1 if failed and not sent else 0
+        text += "\n(Claude check didn't run, so scores are the engine's own.)"
+    T.send_text(text)
+    return 0
 
 
-def queue(sent):
-    """Task 25: a waiting row per sent clip in alfred-hq clips/queue.csv (its clips/bin/approvals.py). Returns a note."""
+def finish(runs):
+    """--finish RUN,RUN: rank the held runs as one batch and send its one message."""
+    runs = [r for r in runs.replace(" ", ",").split(",") if r.strip()]
+    batch, err = queue([], finish=runs)
+    if not batch and not err:
+        T.send_text("No clips came out of runs %s, sir. Open them on GitHub to see why." % ", ".join(runs))
+        return 0
+    return send_batch(batch, err)
+
+
+def queue(sent, finish=()):
+    """Task 25: a row per clip in alfred-hq clips/queue.csv (its clips/bin/approvals.py).
+    26 Nov: rows arrive pending; finish = the runs to rank as one batch in the same write. Returns (batch, error)."""
     tok = os.environ.get("ALFRED_HQ_TOKEN", "")
-    if not sent:
-        return ""
     if not tok:
-        return " (Not on the waiting list: no ALFRED_HQ_TOKEN.)"
+        return [], "no ALFRED_HQ_TOKEN in clip-engine"
     try:
         import datetime
-        sys.path.insert(0, str(Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"))
-        import approvals as A
+        A = glue()
         rows = A.rows_for(sent, os.environ.get("GITHUB_RUN_ID", "0"), os.environ.get("R_RELEASE", ""),
-                          datetime.date.today().isoformat(), os.environ.get("R_CAMPAIGN", ""), os.environ.get("R_FORMAT", ""))
-        A.push(rows, tok)
-        return ""
-    except (Exception, SystemExit) as e:  # noqa: BLE001 - the clips are already sent; just say the list missed them
+                          datetime.date.today().isoformat(), os.environ.get("R_CAMPAIGN", ""),
+                          os.environ.get("R_FORMAT", "")) if sent else []
+        return A.push(rows, tok, finish_runs=tuple(finish)) or [], ""
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - say so in the one message instead of going quiet
         print("queue not saved: %s" % str(e)[:200])
-        return " (The waiting list didn't save this time, so ok/no for this batch may not find the clips.)"
+        return [], str(e)[:160]
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--finish":
+        sys.exit(finish(sys.argv[2]))
     sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", int(sys.argv[3]) if len(sys.argv) > 3 else 0))
