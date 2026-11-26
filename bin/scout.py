@@ -94,6 +94,16 @@ def finished_vods(camp, kick=None, gql=None):
     if camp["platform"] == "twitch":
         user = (gql or I.twitch_gql)('query{user(login:"%s"){videos(first:30,type:ARCHIVE){edges{node{id status}}}}}' % ch)
         edges = (((user.get("user") or {}).get("videos") or {}).get("edges")) or []
+        if not edges and gql is None:  # 26 Nov review: Lacy came back empty on the runner; say what Twitch answered
+            import urllib.request
+            q = json.dumps({"query": 'query{user(login:"%s"){videos(first:3,type:ARCHIVE){edges{node{id status}}}}}' % ch})
+            req = urllib.request.Request("https://gql.twitch.tv/gql", data=q.encode(), headers={
+                "Client-ID": I.TWITCH_CID, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    print("twitch answered for %s: %s" % (ch, r.read()[:300]))
+            except Exception as e:  # noqa: BLE001
+                print("twitch failed for %s: %s" % (ch, str(e)[:200]))
         return ["https://www.twitch.tv/videos/%s" % e["node"]["id"] for e in edges
                 if (e.get("node") or {}).get("id") and e["node"].get("status") != "RECORDING"]
     out = []
