@@ -38,21 +38,38 @@ class GuardsTest(unittest.TestCase):
         self.assertNotIn("word word", head)
         self.assertTrue(rest.startswith("Caption for 1") and rest.rstrip().endswith("</code>"))
 
-    def test_last_message_says_sent_x_of_y(self):  # lesson 4
+    def test_one_message_per_batch_never_one_per_clip(self):  # lesson 4, corrected 26 Nov (his clean slate)
         d = Path(tempfile.mkdtemp())
-        for name in ("01-a", "02-b"):
+        for name in ("01-a", "02-b", "03-c"):
             (d / (name + ".mp4")).write_bytes(b"x")
             (d / (name + ".txt")).write_text("a hook\ncaption", encoding="utf-8")
-        sent = []
-        old = (T.send_video, T.send_text, os.environ.pop("ALFRED_HQ_TOKEN", None))
-        T.send_video, T.send_text = (lambda p, c: sent.append(c)), (lambda t: sent.append(t))
+        (d / "03-c.txt").write_text("REJECTED: no payoff\ncaption", encoding="utf-8")
+        (d / "claude-check.json").write_text(
+            '{"clips": [{"file": "01-a.mp4", "score": 4, "keep": true, "why": "fine, forgettable"},'
+            ' {"file": "02-b.mp4", "score": 9, "keep": false, "why": "Nudity: Lucia in the shower at 6 s."}]}',
+            encoding="utf-8")
+        sent, queued = [], []
+        fake = types.SimpleNamespace(batch_text=lambda b: "%d new clips (1 to %d) ready in the Clip Desk\nhttps://x/desk.html"
+                                     % (len(b), len(b)))
+        old = (T.send_video, T.send_text, S.queue, sys.modules.get("approvals"), os.environ.pop("HOLD", None))
+        T.send_video = lambda p, c: sent.append(("video", c))
+        T.send_text = lambda t: sent.append(("text", t))
+        S.queue = lambda rows, finish=(): (queued.extend(rows) or [{"num": "1"}], "")
+        sys.modules["approvals"] = fake
         try:
             S.main(str(d), "ready to post")
         finally:
-            T.send_video, T.send_text = old[0], old[1]
-        self.assertIn("Sent 2 of 2 clips.", sent[-1])
-        self.assertIn("Nothing is posted until you say ok", sent[-1])
-        self.assertIn("reply <code>ok 1</code>", sent[0])
+            T.send_video, T.send_text, S.queue = old[0], old[1], old[2]
+            sys.modules.pop("approvals", None)
+            if old[3] is not None:
+                sys.modules["approvals"] = old[3]
+        self.assertEqual([k for k, _ in sent], ["text"])  # one message for the batch, no clip videos
+        self.assertIn("1 new clips (1 to 1) ready in the Clip Desk", sent[0][1])
+        self.assertEqual([r[3] for r in queued], ["01-a.mp4", "02-b.mp4"])  # the engine's REJECTED clip never queued
+        self.assertEqual(queued[0][1]["claude_score"], 4)
+        self.assertTrue(queued[1][1].get("claude_reject"))  # Claude's keep = false (his Lacy rules) = rejected
+        self.assertIn('hold) echo "R_HOLD=yes"', GLUE)  # one batch across several VOD runs (batch-finish.yml)
+        self.assertIn("env.R_PROGRESS == 'yes'", GLUE)  # no live progress message unless asked for
 
     def test_every_run_has_a_backup_release(self):  # lesson 5
         self.assertIn('[ -n "$release" ] || release="${R_CAMPAIGN:-test}-', GLUE)

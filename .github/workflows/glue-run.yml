@@ -87,7 +87,10 @@ jobs:
             echo "R_SEND_TOP=${R_SEND_TOP:-0}"; echo "R_REAL=${R_REAL:-no}"; echo "R_GRADE=${R_GRADE:-no}"
             ref=main; community=no; release=; bar=0
             for o in $R_OPTIONS; do
-              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
+              # 26 Nov (his clean slate): hold = one part of a bigger batch (queued, no message; batch-finish.yml
+              # ranks the batch and sends its one message); progress = the live progress message (off by default:
+              # one Telegram message per batch)
+              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; hold) echo "R_HOLD=yes" ;; progress) echo "R_PROGRESS=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
             done
             # 25 Nov: every run is backed up to a private alfred-hq release, not just community runs
             [ -n "$release" ] || release="${R_CAMPAIGN:-test}-$(date -u +%F)"
@@ -128,8 +131,8 @@ jobs:
           echo "CLIP_ENGINE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           echo "GCLIP_MODELS=$W/tools/models" >> "$GITHUB_ENV"
 
-      - name: Live progress in Telegram (one message, edited every 30 s)
-        if: env.R_SEND == 'yes'
+      - name: Live progress in Telegram (one message, edited every 30 s; only with option progress since 26 Nov)
+        if: env.R_SEND == 'yes' && env.R_PROGRESS == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -242,15 +245,17 @@ jobs:
           find "$WORK/out" -name "*.mp4" | wc -l
           [ "$ok" = 1 ]
 
-      - name: Claude checks the top 5 and writes 3 hooks each (his C + light B, 25 Nov)
+      # 26 Nov (his clean slate): every clip gets Claude's honest score and one-line why (was the top 5); the desk
+      # ranks the batch by it, and keep = false (his Lacy rules) is an instant reject
+      - name: Claude scores every clip and writes 3 hooks each (his C + light B, 25 Nov)
         if: always() && env.R_SEND == 'yes'
-        continue-on-error: true  # the clips still go without it; the last Telegram message says it didn't run
-        timeout-minutes: 15
+        continue-on-error: true  # the clips still go without it; the batch message says it didn't run
+        timeout-minutes: 50
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "::notice::No CLAUDE_CODE_OAUTH_TOKEN in clip-engine: Claude check skipped"; exit 0; }
-          top=$(find "$WORK/out" -name "*.mp4" | sort | while read -r f; do grep -q '"rejected": "[^"]' "${f%.mp4}.clip.json" 2>/dev/null || echo "$f"; done | head -5)
+          top=$(find "$WORK/out" -name "*.mp4" | sort | while read -r f; do grep -q '"rejected": "[^"]' "${f%.mp4}.clip.json" 2>/dev/null || echo "$f"; done | head -40)
           [ -n "$top" ] || { echo "no clips to check"; exit 0; }
           npm install -g --silent @anthropic-ai/claude-code > /dev/null 2>&1
           # Output goes to a file, never this public log (alfred-hq CLAUDE.md: the run's words stay private)
@@ -258,7 +263,7 @@ jobs:
 
           OUT_FILE: $WORK/out/claude-check.json
           CLIPS:
-          $top" --model claude-sonnet-5-5 --max-turns 40 --allowedTools "Read,Write" --add-dir "$WORK" --permission-mode acceptEdits > "$WORK/claude.out" 2>&1 || true
+          $top" --model claude-sonnet-5-5 --max-turns 200 --allowedTools "Read,Write" --add-dir "$WORK" --permission-mode acceptEdits > "$WORK/claude.out" 2>&1 || true
           python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['clips']), 'clips checked')" "$WORK/out/claude-check.json" \
             || { rm -f "$WORK/out/claude-check.json"; echo "Claude check gave no usable answer"; exit 1; }
 
@@ -289,12 +294,15 @@ jobs:
         run: python3 alfred-hq/clips/bin/used.py add "$WORK/out" --ref "$R_REF" || echo "USED_NOTE=Used-moments list not saved this time (next run may repeat a moment)." >> "$GITHUB_ENV"
 
       - name: Finish the progress message
-        if: always() && env.R_SEND == 'yes'
+        if: always() && env.R_SEND == 'yes' && env.R_PROGRESS == 'yes'
         run: touch "$WORK/progress.done" && sleep 32
 
-      - name: Send to Telegram
-        if: always() && env.R_SEND == 'yes'  # task 17: a run that breaks late still sends the clips it made
+      # 26 Nov (his clean slate): no clip goes to Telegram any more; the batch goes on the Clip Desk (top 15 new,
+      # the rest low) and one message says "N new clips (X to Y) ready in the Clip Desk" with the link
+      - name: Queue the batch on the Clip Desk (one Telegram message per batch)
+        if: always() && env.R_SEND == 'yes'  # task 17: a run that breaks late still queues the clips it made
         env:
+          HOLD: ${{ env.R_HOLD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TOP: ${{ env.R_SEND_TOP }}
@@ -326,7 +334,7 @@ jobs:
           else head="The clip run broke while setting up, before any clips."; fi
           python3 bin/send_telegram.py text "$head Nothing was posted, sir.
           Reason: ${why:-not in the clip log; see $RUN_URL}
-          Any clips it made were sent above. Try again: send the same clip command."
+          Any clips it made are on the Clip Desk. Try again: send the same clip command."
 
       - uses: actions/upload-artifact@v4
         if: always() && env.R_REAL != 'yes'

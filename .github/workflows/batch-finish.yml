@@ -1,0 +1,40 @@
+name: batch-finish
+
+# 26 Nov 2026 (his clean slate): one batch made from several glue-runs (one per VOD, each started with option
+# "hold") is ranked here as ONE batch: the best 15 by the Claude check's score go on the Clip Desk as new (numbered
+# best first), the rest under "low", and ONE Telegram message says "N new clips (X to Y) ready in the Clip Desk".
+# The ranking lives in alfred-hq clips/bin/approvals.py (finish); this only runs it and sends the message.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: glue-run run IDs in the batch, comma separated
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Glue (private alfred-hq, read only)
+        uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips
+          persist-credentials: false
+      - name: Rank the batch and send its one message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # writes alfred-hq clips/queue.csv (contents API)
+          RUNS: ${{ inputs.runs }}
+        run: |
+          echo "$RUNS" | grep -qE '^[0-9, ]+$' || { echo "runs must be numbers"; exit 1; }
+          python3 bin/send_clips.py --finish "$RUNS"
