@@ -1,0 +1,39 @@
+name: scout
+
+# 26 Nov 2026 (his step 2: clips arrive on their own). Every 2 hours the Scout looks for a finished new stream of
+# Lacy (Twitch) and Togi (Kick) and starts one batch on it; on a short day (under 8 fresh clips on the desk) it
+# uses the next unused older stream, so 8 of each wait by 15:30 UK. bin/scout.py has the rules.
+# Nothing is ever posted: batches land on the Clip Desk as "new" (waiting for his ok). Public repo = free minutes.
+
+on:
+  schedule:
+    - cron: "37 */2 * * *"  # every 2 h, off the busy top of the hour (GitHub runs timers late at busy times)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write  # to start glue-run
+
+concurrency:
+  group: scout
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Settings, queue and clipped streams (private alfred-hq, read only)
+        uses: actions/checkout@v4
+        with:
+          repository: mapadda11/alfred-hq
+          token: ${{ secrets.ALFRED_HQ_TOKEN }}
+          path: alfred-hq
+          sparse-checkout: clips
+          persist-credentials: false
+      - name: Look for new streams and top up the desk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # writes clips/vods.csv
+        run: python3 bin/scout.py

@@ -120,10 +120,12 @@ class GuardsTest(unittest.TestCase):
         self.assertNotIn("group: glue-run-${{ inputs.vod_url }}", GLUE)
 
     def test_no_clip_run_starts_on_a_timer(self):  # task 25 step 1
+        # Correction (2026-11-26, his step 2 "clips arrive on their own"): the Scout (scout.yml, every 2 h) may start
+        # clip runs too; glue-run itself still never has a timer, and nothing ever posts.
         for wf in (ROOT / ".github" / "workflows").glob("*.yml"):
             text = wf.read_text(encoding="utf-8")
             if "schedule:" in text:
-                self.assertEqual(wf.name, "telegram-inbox.yml", "only the message reader may have a timer")
+                self.assertIn(wf.name, ("telegram-inbox.yml", "scout.yml"), "only the message reader and the Scout may have a timer")
 
 
 if __name__ == "__main__":

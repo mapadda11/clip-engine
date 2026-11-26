@@ -1,4 +1,6 @@
 name: glue-run
+# 26 Nov (his step 2): "clip CAMPAIGN VOD OPTIONS" so the Scout (bin/scout.py) can see whose run is going and on what
+run-name: clip ${{ inputs.campaign || 'request' }} ${{ inputs.vod_url || '-' }} ${{ inputs.options }}
 
 # Step 2: the full clipper (private glue in alfred-hq + gaming-clip + the Linux picture tools) on one VOD,
 # as a --test run: never posted, never logged. Clips are kept for one day as an artifact, then deleted.
@@ -43,6 +45,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # 26 Nov: a failed run starts its one retry
 
 concurrency:
   # Task 25 (25 Nov): each run its own group. A shared per-VOD group made a second run for the same VOD wait,
@@ -90,7 +93,7 @@ jobs:
               # 26 Nov (his clean slate): hold = one part of a bigger batch (queued, no message; batch-finish.yml
               # ranks the batch and sends its one message); progress = the live progress message (off by default:
               # one Telegram message per batch)
-              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; hold) echo "R_HOLD=yes" ;; progress) echo "R_PROGRESS=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
+              case "$o" in community) community=yes ;; lenient) echo "R_LENIENT=yes" ;; hold) echo "R_HOLD=yes" ;; progress) echo "R_PROGRESS=yes" ;; retry) echo "R_RETRY=yes" ;; ref:*) ref=${o#ref:} ;; release:*) release=${o#release:} ;; bar:*) bar=${o#bar:} ;; format:*) echo "R_FORMAT=${o#format:}" ;; esac
             done
             # 25 Nov: every run is backed up to a private alfred-hq release, not just community runs
             [ -n "$release" ] || release="${R_CAMPAIGN:-test}-$(date -u +%F)"
@@ -317,21 +320,32 @@ jobs:
           note="$note${n:+; $n chunk(s) skipped, could not transcribe}"
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
-      - name: Tell him it failed
+      - name: Retry once, then tell him it failed
         # 25 Nov: cancelled() too, so a run that hits the time limit or is stopped never goes quiet
+        # 26 Nov (his step 2): a failed run starts the same run once more, quietly ("retry" option); only when the
+        # retry fails too does he get one message saying why. A stopped or timed-out run is not retried.
         if: (failure() || cancelled()) && env.R_SEND == 'yes'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
           STATUS: ${{ job.status }}
           MAKE: ${{ steps.make.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          if [ "$STATUS" != cancelled ] && [ "${R_RETRY:-}" != yes ] && [ -n "$R_VOD_URL" ] && \
+             gh workflow run glue-run.yml -R "$GITHUB_REPOSITORY" -f vod_url="$R_VOD_URL" -f campaign="$R_CAMPAIGN" \
+               -f max="$R_MAX" -f model="$R_MODEL" -f send=yes -f send_top="$R_SEND_TOP" -f real="$R_REAL" \
+               -f grade="$R_GRADE" -f span="$R_SPAN" -f options="$R_OPTIONS retry"; then
+            echo "Failed once: started the one retry (no message yet)."
+            exit 0
+          fi
           why=$(grep -aE "Error|failed|FAILED|SystemExit|Refusing" "${WORK:-/none}/out/run.log" 2>/dev/null | grep -v onnxruntime | tail -n 1 | cut -c1-300)
           if [ "$STATUS" = cancelled ]; then head="The clip run was stopped (cancelled, or it hit the 5.5 h limit)."
           elif [ "$MAKE" = success ]; then head="The clips were made, but a step after them failed (sending or backup)."
           elif [ "$MAKE" = failure ]; then head="The clip run broke while making clips."
           else head="The clip run broke while setting up, before any clips."; fi
+          [ "${R_RETRY:-}" = yes ] && head="${R_CAMPAIGN:+$R_CAMPAIGN: }$head It failed twice (it retried once by itself)."
           python3 bin/send_telegram.py text "$head Nothing was posted, sir.
           Reason: ${why:-not in the clip log; see $RUN_URL}
           Any clips it made are on the Clip Desk. Try again: send the same clip command."
