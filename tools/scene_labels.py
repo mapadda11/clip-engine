@@ -16,6 +16,9 @@ LABELS = {
                   "a club interior with coloured spotlights"],
     "swimwear": ["a woman in a bikini or swimsuit"],
     "lingerie": ["a woman in lingerie or underwear", "a topless dancer"],
+    # 26 Nov 2026 (his Lacy review: Lucia naked in the shower, "will get me banned"; his rule: nudity = instant reject)
+    "nudity": ["a naked person", "a nude woman in a shower", "a naked video game character",
+               "a person with bare breasts or buttocks"],
     "street": ["a city street with cars in a video game", "a car driving on a road at night"],
     "car_interior": ["the inside of a car while driving"],
     "countryside": ["a forest or countryside road", "a swamp with trees"],
@@ -29,6 +32,9 @@ LABELS = {
     "action": ["a shootout or police chase", "a car crash"],
 }
 NEON_MIN = 0.10
+# 26 Nov: a naked frame can split its share across these labels so none passes the glue's bar alone, so their
+# total is printed too as "adult" (alfred-hq cliplib.SCENE_STRONG treats it like the others).
+ADULT = ("swimwear", "lingerie", "nudity")
 
 
 def neon_share(path):
@@ -93,6 +99,9 @@ def main(paths):
                 score["nightclub"] = 0.0
             top = sorted(score.items(), key=lambda kv: -kv[1])
             labs = " ".join("%s:%.2f" % kv for kv in top if kv[1] > 0.1)
+            adult = sum(score.get(k, 0.0) for k in ADULT)
+            if adult > 0.1:
+                labs += " adult:%.2f" % min(adult, 1.0)
             print(Path(path).name, labs, "| TEXT:", ocr(path), flush=True)
 
 
