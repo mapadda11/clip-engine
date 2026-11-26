@@ -86,8 +86,9 @@ def claude_notes(folder):
 
 
 def hook_ideas(v):
-    """The Hook Writer's ideas minus any with AI tells (task 25; alfred-hq clips/bin/humanize.py), numbered 1-3."""
-    hooks = [str(h)[:90] for h in ((v or {}).get("hooks") or [])[:3]]
+    """The Hook Writer's ideas minus any with AI tells (task 25; alfred-hq clips/bin/humanize.py).
+    Correction (2026-11-26 evening, his step 3): 2 variants per clip (was 3), both shown on the Clip Desk."""
+    hooks = [str(h)[:90] for h in ((v or {}).get("hooks") or [])[:2]]
     try:
         sys.path.insert(0, str(Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips" / "bin"))
         import humanize
