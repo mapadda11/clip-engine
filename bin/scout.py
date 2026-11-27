@@ -26,7 +26,13 @@ import telegram_inbox as I  # noqa: E402
 STREAMERS = ("lacy", "togi")
 FRESH = 8        # his rule: at least 8 fresh clips of each streamer waiting by 15:30 UK
 MAKE = 14        # clips a batch aims for; the best 8 go on the desk as new, the rest "low"
+# 27 Nov (his step 3): Lacy batches aim for 25 clips per VOD; his format is untouched (settings lacy.txt)
+MAKE_FOR = {"lacy": 25, "togi": MAKE}
 DAILY_CAP = 3    # scout runs per streamer per UK day
+# 27 Nov (his step 3): 40 new Lacy clips this weekend, all auto-sent. While a push is short of its target the Scout
+# keeps starting the next unused Lacy VOD (newest first, one run at a time), up to `cap` runs a day, whatever the
+# desk holds or the hour. Clips that can never be sent (nudity, gambling) don't count.
+PUSH = {"lacy": {"from": "2026-11-27", "to": "2026-11-29", "target": 40, "cap": 8}}
 TOPUP_FROM = 6   # UK hour from which a short day is topped up from an older VOD
 CLIPS = Path(os.environ.get("ALFRED_HQ", "alfred-hq")) / "clips"
 VODS = "clips/vods.csv"
@@ -111,12 +117,33 @@ def finished_vods(camp, kick=None, gql=None):
     return out
 
 
+def push_left(name, today, queue):
+    """Clips still needed for this streamer's push today, or 0 when there is no push on."""
+    p = PUSH.get(name)
+    if not p or not (p["from"] <= today <= p["to"]):
+        return 0
+    bad = ("nudity", "naked", "gambl", "casino", "slots", "shuffle.com", "roobet")
+    made = sum(1 for r in queue if r.get("campaign") == name and p["from"] <= (r.get("date") or "") <= p["to"]
+               and r.get("link") and not any(b in ("%s %s" % (r.get("reason"), r.get("why"))).lower() for b in bad))
+    return max(0, p["target"] - made)
+
+
 def decide(camp, name, vods, done, runs, queue, now, today_utc):
     """(url, why) to start, or (None, reason) for this streamer. Pure: everything it needs is passed in."""
     today = now.date().isoformat()
     have = fresh(name, today, queue)
     if busy(name, runs):
         return None, "a run is already going (%d fresh on the desk today)" % have
+    left_push = push_left(name, today, queue)
+    if left_push:
+        if started_today(name, runs, today_utc) >= PUSH[name]["cap"]:
+            return None, "weekend push: %d clips to go, but %d runs today is the cap" % (left_push, PUSH[name]["cap"])
+        taken = set(done) | {vod_id(title_of(r)[1]) for r in runs if title_of(r)[1]}
+        left = [u for u in vods if vod_id(u) not in taken]
+        if left:
+            return left[0], "%sweekend push: %d of %d clips to go" % (
+                "new stream; " if vods and vods[0] in left else "", left_push, PUSH[name]["target"])
+        return None, "weekend push: %d clips to go but every stream on the list is clipped" % left_push
     if started_today(name, runs, today_utc) >= DAILY_CAP:
         return None, "already started %d runs today, the daily cap (%d fresh)" % (DAILY_CAP, have)
     taken = set(done) | {vod_id(title_of(r)[1]) for r in runs if title_of(r)[1]}
@@ -135,7 +162,8 @@ def decide(camp, name, vods, done, runs, queue, now, today_utc):
 
 
 def start(name, url, why, dispatch=None):
-    (dispatch or (lambda: I.gh("workflow", "run", "glue-run.yml", "-f", "vod_url=" + url, "-f", "max=%d" % MAKE,
+    (dispatch or (lambda: I.gh("workflow", "run", "glue-run.yml", "-f", "vod_url=" + url, "-f",
+                               "max=%d" % MAKE_FOR.get(name, MAKE),
                                "-f", "send=yes", "-f", "campaign=" + name, "-f", "real=yes",
                                "-f", "options=scout")))()
 
@@ -177,7 +205,7 @@ def main():
         if url:
             start(name, url, why)
             started.append({"date": now.date().isoformat(), "campaign": name, "vod": vod_id(url), "url": url, "why": why})
-            lines.append("%s: started a batch of %d on %s (%s)" % (name, MAKE, url, why))
+            lines.append("%s: started a batch of %d on %s (%s)" % (name, MAKE_FOR.get(name, MAKE), url, why))
         else:
             lines.append("%s: nothing to start, %s" % (name, why))
     if started:

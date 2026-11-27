@@ -7,7 +7,7 @@ name: scout
 
 on:
   schedule:
-    - cron: "37 */2 * * *"  # every 2 h, off the busy top of the hour (GitHub runs timers late at busy times)
+    - cron: "37 */2 * * *"  # backstop only since 27 Nov: each run looks every 30 min for 5 h 40 min, then starts the next
   workflow_dispatch:
 
 permissions:
@@ -21,19 +21,28 @@ concurrency:
 jobs:
   scout:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 27 Nov (lessons 49): GitHub's 2-hour timer fired once in 16 h on 26-27 Nov, so batches stopped. Each Scout
+    # run now stays up 5 h 40 min, looks every 30 min (fresh alfred-hq files each time), then starts the next
+    # Scout itself. The timer above stays as the backstop that restarts the chain if it ever breaks. Public repo
+    # minutes are free; only Python runs here, never Claude.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - name: Settings, queue and clipped streams (private alfred-hq, read only)
-        uses: actions/checkout@v4
-        with:
-          repository: mapadda11/alfred-hq
-          token: ${{ secrets.ALFRED_HQ_TOKEN }}
-          path: alfred-hq
-          sparse-checkout: clips
-          persist-credentials: false
-      - name: Look for new streams and top up the desk
+      - name: Look for new streams every 30 min, then hand over to the next Scout
         env:
           GH_TOKEN: ${{ github.token }}
-          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # writes clips/vods.csv
-        run: python3 bin/scout.py
+          ALFRED_HQ_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # reads clips/, writes clips/vods.csv
+        run: |
+          end=$(( $(date +%s) + 340 * 60 ))
+          while :; do
+            rm -rf alfred-hq
+            git clone -q --depth 1 --filter=blob:none --sparse \
+              "https://x-access-token:${ALFRED_HQ_TOKEN}@github.com/mapadda11/alfred-hq.git" alfred-hq \
+              && git -C alfred-hq sparse-checkout set clips \
+              && python3 bin/scout.py || echo "::warning::this look failed; trying again in 30 min"
+            [ $(( $(date +%s) + 30 * 60 )) -lt "$end" ] || break
+            sleep 1800
+          done
+          # hand over: start the next Scout unless one is already waiting (the timer's backstop run)
+          waiting=$(gh run list -R "$GITHUB_REPOSITORY" -w scout.yml -s queued --json databaseId -q length)
+          [ "${waiting:-0}" -gt 0 ] || gh workflow run scout.yml -R "$GITHUB_REPOSITORY"

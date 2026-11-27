@@ -26,6 +26,12 @@ def run(camp, url, status="completed", opts="scout", day="2026-11-27"):
 
 
 class ScoutTest(unittest.TestCase):
+    def setUp(self):  # the everyday rules; the weekend push (27 Nov) has its own tests below
+        self._push, S.PUSH = S.PUSH, {}
+
+    def tearDown(self):
+        S.PUSH = self._push
+
     def decide(self, done=(), runs=(), queue=(), now=MORNING):
         return S.decide(LACY, "lacy", V, set(done), list(runs), list(queue), now, now.date().isoformat())
 
@@ -106,3 +112,44 @@ class ScoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PushTest(unittest.TestCase):
+    """27 Nov, his step 3: Lacy batches aim for 25 a VOD, and 40 new Lacy clips this weekend."""
+    def decide(self, runs=(), queue=(), now=MORNING, done=("300",)):
+        return S.decide(LACY, "lacy", V, set(done), list(runs), list(queue), now, now.date().isoformat())
+
+    def test_lacy_aims_for_25_a_vod_togi_unchanged(self):
+        self.assertEqual((S.MAKE_FOR["lacy"], S.MAKE_FOR["togi"]), (25, 14))
+        asked = []
+        S.I.gh, old = (lambda *a: asked.append(a)), S.I.gh
+        try:
+            S.start("lacy", V[0], "x")
+        finally:
+            S.I.gh = old
+        self.assertIn("max=25", asked[0])
+
+    def test_short_of_40_starts_the_next_vod_whatever_the_desk_or_hour(self):
+        full = [dict(r, link="x") for r in desk(20)]  # 20 fresh: the everyday rule would stop here
+        url, why = self.decide(queue=full, now=dt.datetime(2026, 11, 28, 3, 0))  # before 06:00 too
+        self.assertEqual(url, V[1])
+        self.assertIn("20 of 40 clips to go", why)
+
+    def test_nudity_and_gambling_do_not_count(self):
+        q = [dict(r, link="x") for r in desk(39)] + [{"campaign": "lacy", "date": "2026-11-27", "link": "x",
+                                                     "reason": "Nudity: shower"}]
+        self.assertIn("1 of 40", self.decide(queue=q)[1])
+
+    def test_40_made_ends_the_push_and_one_run_at_a_time_stays(self):
+        q = [dict(r, link="x") for r in desk(40)]
+        self.assertIsNone(self.decide(queue=q)[0])
+        self.assertIsNone(self.decide(runs=[run("lacy", V[2], status="in_progress")])[0])
+
+    def test_push_ends_after_sunday(self):
+        self.assertIsNone(self.decide(queue=desk(9, day="2026-11-30"), now=dt.datetime(2026, 11, 30, 9, 0))[0])  # everyday rule again
+
+    def test_the_scout_looks_every_30_min_and_starts_the_next_itself(self):
+        wf = (ROOT / ".github" / "workflows" / "scout.yml").read_text(encoding="utf-8")
+        self.assertIn("sleep 1800", wf)
+        self.assertIn("gh workflow run scout.yml", wf)
+        self.assertNotIn("claude", wf.lower().replace("never claude", ""))
