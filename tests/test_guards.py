@@ -140,3 +140,11 @@ class EveryClipSentTest(unittest.TestCase):  # alfred-hq clips/lessons.md 48 (27
         self.assertLess(GLUE.index("bin/send_clips.py \"$WORK/out\""), GLUE.index("deliver.py --runs"))
         fin = (ROOT / ".github" / "workflows" / "batch-finish.yml").read_text(encoding="utf-8")
         self.assertIn("deliver.py --runs \"$RUNS\"", fin)
+
+
+class OneClaudePerBatchTest(unittest.TestCase):  # 27 Nov, his step 4
+    def test_claude_runs_once_per_batch_in_20_turns_from_context_md(self):
+        self.assertEqual(GLUE.count("claude -p"), 1)
+        self.assertIn("--max-turns 20", GLUE)
+        self.assertIn("context.py --batch", GLUE)
+        self.assertLess(GLUE.index("alfred-hq/clips/bin/context.py"), GLUE.index("claude -p"))

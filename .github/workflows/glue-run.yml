@@ -261,12 +261,17 @@ jobs:
           top=$(find "$WORK/out" -name "*.mp4" | sort | while read -r f; do grep -q '"rejected": "[^"]' "${f%.mp4}.clip.json" 2>/dev/null || echo "$f"; done | head -40)
           [ -n "$top" ] || { echo "no clips to check"; exit 0; }
           npm install -g --silent @anthropic-ai/claude-code > /dev/null 2>&1
+          # 27 Nov (his step 4): Python does the work first: context.md fresh from lessons/winning/formula, and one
+          # batch file with every clip's pack and caption, so Claude runs once per batch in at most 20 turns
+          python3 alfred-hq/clips/bin/context.py
+          python3 alfred-hq/clips/bin/context.py --batch "$WORK/out" "$WORK/batch.md"
           # Output goes to a file, never this public log (alfred-hq CLAUDE.md: the run's words stay private)
           claude -p "$(cat alfred-hq/clips/bin/claude-check.md)
 
           OUT_FILE: $WORK/out/claude-check.json
+          BATCH_FILE: $WORK/batch.md
           CLIPS:
-          $top" --model claude-sonnet-5-5 --max-turns 200 --allowedTools "Read,Write" --add-dir "$WORK" --permission-mode acceptEdits > "$WORK/claude.out" 2>&1 || true
+          $top" --model claude-sonnet-5-5 --max-turns 20 --allowedTools "Read,Write" --add-dir "$WORK" --permission-mode acceptEdits > "$WORK/claude.out" 2>&1 || true
           python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['clips']), 'clips checked')" "$WORK/out/claude-check.json" \
             || { rm -f "$WORK/out/claude-check.json"; echo "Claude check gave no usable answer"; exit 1; }
 
