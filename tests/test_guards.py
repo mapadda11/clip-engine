@@ -130,3 +130,13 @@ class GuardsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EveryClipSentTest(unittest.TestCase):  # alfred-hq clips/lessons.md 48 (27 Nov, his fix)
+    def test_every_batch_ends_by_sending_every_clip(self):
+        step = GLUE.split("Send every clip to Telegram (Python, no Claude)")[1].split("- name:")[0]
+        self.assertIn("deliver.py --runs \"$GITHUB_RUN_ID\"", step)
+        self.assertIn("env.R_HOLD != 'yes'", step)  # a held run sends from batch-finish instead
+        self.assertLess(GLUE.index("bin/send_clips.py \"$WORK/out\""), GLUE.index("deliver.py --runs"))
+        fin = (ROOT / ".github" / "workflows" / "batch-finish.yml").read_text(encoding="utf-8")
+        self.assertIn("deliver.py --runs \"$RUNS\"", fin)

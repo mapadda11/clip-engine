@@ -320,6 +320,22 @@ jobs:
           note="$note${n:+; $n chunk(s) skipped, could not transcribe}"
           python3 bin/send_clips.py "$WORK/out" "$note" "$SEND_TOP"
 
+      # 27 Nov 2026 (his fix "every clip goes to Telegram automatically"): the end of every batch sends every clip
+      # it made, Lacy and Togi, as videos in batches of 10, best first, with number, warnings, hook and caption to
+      # tap-copy (alfred-hq clips/bin/deliver.py --runs). Only nudity, gambling, repeats and posted clips stay back;
+      # alfred-hq clips/sent.csv logs each one so none goes twice. A held run (part of a bigger batch) sends from
+      # batch-finish.yml instead.
+      - name: Send every clip to Telegram (Python, no Claude)
+        if: always() && env.R_SEND == 'yes' && env.R_HOLD != 'yes'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ secrets.ALFRED_HQ_TOKEN }}  # reads the private release, writes queue.csv and sent.csv
+        run: |
+          sudo apt-get install -y -qq fonts-noto-color-emoji > /dev/null 2>&1 || true
+          python -m pip install -q pillow
+          python alfred-hq/clips/bin/deliver.py --runs "$GITHUB_RUN_ID"
+
       - name: Retry once, then tell him it failed
         # 25 Nov: cancelled() too, so a run that hits the time limit or is stopped never goes quiet
         # 26 Nov (his step 2): a failed run starts the same run once more, quietly ("retry" option); only when the
